@@ -28,3 +28,10 @@ async def test_market_fallback_and_rf_rule():
     assert result["region_avg"] == result["rf_avg"] == 1_650_000
     assert result["quick"] == 1_520_000
 
+
+@pytest.mark.asyncio
+async def test_lada_market_fallback_is_not_zero():
+    service = MarketService(session=None)
+    result = await service.prices("Лада 2114 Самара", 2011, "Новосибирск и НО")
+    assert result["region_avg"] == 190_000
+    assert result["quick"] == 180_000

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import aiohttp
 from aiogram import Bot, Dispatcher
@@ -12,8 +13,14 @@ from handlers import build_router
 from services.market_api import MarketService
 from services.yandex_gpt import YandexGPTService
 
+logger = logging.getLogger(__name__)
+
 
 async def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
     settings = Settings.from_env()
     await init_db()
     db = Database()
@@ -24,6 +31,8 @@ async def main() -> None:
         dispatcher = Dispatcher(db=db, gpt=gpt, market=market)
         dispatcher.include_router(build_router())
         try:
+            identity = await bot.get_me()
+            logger.info("Бот успешно запущен: @%s (id=%s)", identity.username, identity.id)
             await dispatcher.start_polling(bot)
         finally:
             await bot.session.close()

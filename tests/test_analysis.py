@@ -1,4 +1,4 @@
-from handlers.analysis import sanitize_items, sanitize_risk
+from handlers.analysis import sanitize_items, sanitize_prices, sanitize_risk
 from utils.formatters import format_report
 
 
@@ -17,3 +17,7 @@ def test_sanitizers_and_report():
     assert "Москва и МО" in report and "Средняя цена по всей РФ" in report
     assert "auto.ru/parts/search" in report
 
+
+def test_sanitize_raw_market_prices():
+    assert sanitize_prices(["100000", -1, None, 200000]) == [100000, 200000]
+    assert sanitize_prices("100000") == []
