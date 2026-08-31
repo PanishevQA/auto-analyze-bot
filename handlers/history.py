@@ -5,6 +5,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from utils.formatters import money
+from utils.messages import answer_long_html
 
 router = Router()
 
@@ -49,4 +50,4 @@ async def show_calculation(message: Message, argument: str, db) -> None:
         )
         return
     heading = f"📊 <b>ОТЧЕТ #{calculation_id}</b> (от {_date(calculation['created_at'])})\n\n"
-    await message.answer(heading + calculation["final_report"], disable_web_page_preview=True)
+    await answer_long_html(message, heading + calculation["final_report"])

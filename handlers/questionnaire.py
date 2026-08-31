@@ -96,17 +96,15 @@ async def photo_damage(message: Message, state: FSMContext) -> None:
 
 
 @router.message(Questionnaire.waiting_issues)
-async def issues(message: Message, state: FSMContext, gpt) -> None:
+async def issues(message: Message, state: FSMContext) -> None:
     await state.update_data(user_issues=validate_issues(message.text))
     data = await state.get_data()
-    typical = await gpt.from_template("typical_issues.txt", data, {"typical_issues": []})
-    await state.update_data(typical_issues=typical.get("typical_issues", []))
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить и провести анализ", callback_data="confirm")],
         [InlineKeyboardButton(text="✏️ Редактировать данные", callback_data="edit")],
     ])
     await state.set_state(Questionnaire.waiting_confirmation)
-    await message.answer(format_summary(data, typical.get("typical_issues", [])), reply_markup=keyboard)
+    await message.answer(format_summary(data), reply_markup=keyboard)
 
 
 @router.callback_query(Questionnaire.waiting_confirmation, F.data == "edit")

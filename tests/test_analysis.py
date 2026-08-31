@@ -1,23 +1,58 @@
-from handlers.analysis import sanitize_items, sanitize_prices, sanitize_risk
-from utils.formatters import format_report
+from pathlib import Path
+
+from handlers.analysis import normalize_analysis
+from utils.formatters import format_commercial_report
 
 
-def test_sanitizers_and_report():
-    items = sanitize_items([{"category": "critical", "item": "Цепь", "budget_economy": "10",
-                             "budget_optimal": 20, "search_query": "цепь"}, {"category": "bad"}])
-    assert len(items) == 1
-    risk = sanitize_risk({"risk_score": 120, "risk_explanation": "ok", "inspection_checklist": ["x"]})
-    assert risk["risk_score"] == 100
-    car = {"car_model": "Toyota Camry", "year": 2014, "mileage": 100000,
-           "price": 1000000, "region": "Москва и МО"}
-    market = {"region_avg": 1, "rf_avg": 2, "quick": 3, "min": 1, "max": 4}
-    scores = {"economy_total": 10, "optimal_total": 20, "total_costs": 1000030,
-              "profit": -1000027, "profitability": 0}
-    report = format_report(car, market, items, risk, scores)
-    assert "Москва и МО" in report and "Средняя цена по всей РФ" in report
-    assert "auto.ru/parts/search" in report
+def _raw_analysis():
+    item = {"name": "Порог", "reason": "Коррозия", "status": "confirmed",
+            "parts_cost": 10_000, "labor_cost": 20_000, "total_cost": 999_999,
+            "priority": "critical"}
+    return {
+        "market": {"region": {"low": 200_000, "mid": 250_000, "high": 300_000},
+                   "rf": {"low": 190_000, "mid": 240_000, "high": 310_000},
+                   "realistic_sale_price": 250_000, "quick_sale_price": 230_000,
+                   "market_comment": "Экспертная оценка"},
+        "repairs": {"critical_repairs": [item], "sale_preparation": [], "maintenance": [],
+                    "potential_repairs": [], "risk_reserve": 15_000},
+        "economics": {"target_purchase_price": 190_000, "excellent_purchase_price": 170_000},
+        "risk": {"risk_score": 45, "risk_level": "medium", "main_risks": ["Коррозия"],
+                 "worst_case_expense": 50_000, "comment": "Нужен подъемник"},
+        "liquidity": {"liquidity_score": 80, "liquidity_level": "high", "comment": "Ликвидна"},
+        "inspection_checklist": ["Проверить пороги на подъемнике"],
+        "negotiation": {"start_offer": 150_000, "negotiation_arguments": ["Коррозия"]},
+        "verdict": {"code": "only_after_discount", "score": 60, "should_inspect": True,
+                    "summary": "Только после торга", "main_profit_factor": "Ликвидность",
+                    "main_loss_risk": "Скрытая коррозия"},
+    }
 
 
-def test_sanitize_raw_market_prices():
-    assert sanitize_prices(["100000", -1, None, 200000]) == [100000, 200000]
-    assert sanitize_prices("100000") == []
+def test_normalizer_recalculates_all_math_in_python():
+    car = {"car_model": "Лада", "year": 2011, "mileage": 250_000,
+           "region": "Новосибирск", "purchase_price": 240_000}
+    result = normalize_analysis(_raw_analysis(), car)
+    assert result["repairs"]["critical_repairs"][0]["total_cost"] == 30_000
+    assert result["repairs"]["recommended_preparation_cost"] == 30_000
+    assert result["economics"]["total_investment"] == 270_000
+    assert result["economics"]["expected_profit"] == -20_000
+    assert result["economics"]["roi_percent"] == -7.4
+    assert result["economics"]["required_discount"] == 50_000
+
+
+def test_commercial_report_contains_decision_sections():
+    car = {"car_model": "Лада", "year": 2011, "mileage": 250_000,
+           "region": "Новосибирск", "purchase_price": 240_000}
+    report = format_commercial_report(normalize_analysis(_raw_analysis(), car))
+    assert "КОММЕРЧЕСКИЙ АНАЛИЗ" in report
+    assert "ROI: <b>-7.4%</b>" in report
+    assert "ПОТЕНЦИАЛЬНЫЕ РЕМОНТЫ" in report
+    assert "Стоит ехать смотреть: <b>Да</b>" in report
+
+
+def test_full_prompt_accepts_all_questionnaire_fields():
+    template = (Path(__file__).parents[1] / "prompts" / "full_analysis.txt").read_text(encoding="utf-8")
+    prompt = template.format_map({"car_model": "Лада", "year": 2011, "mileage": 250_000,
+                                  "engine": "1.6 МКПП", "region": "Новосибирск",
+                                  "purchase_price": 200_000, "listing_description": "Текст",
+                                  "photo_damage": "Царапина", "additional_info": "Нет"})
+    assert "Лада" in prompt and '"potential_repairs"' in prompt
