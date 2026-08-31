@@ -54,15 +54,18 @@ notepad .env
 | Поле | Назначение и получение |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Создайте бота через [@BotFather](https://t.me/BotFather), выполните `/newbot` и скопируйте токен. |
-| `YANDEX_CLOUD_OAUTH_TOKEN` | Авторизуйтесь в Yandex и получите OAuth-токен по [инструкции Yandex Cloud](https://yandex.cloud/ru/docs/iam/concepts/authorization/oauth-token). |
 | `YANDEX_CLOUD_FOLDER_ID` | Откройте нужный каталог в [консоли Yandex Cloud](https://console.yandex.cloud/); идентификатор указан на странице каталога. |
+| `YANDEX_CLOUD_API_KEY` | Рекомендуемый способ: создайте API-ключ сервисного аккаунта с доступом к Foundation Models. |
+| `YANDEX_CLOUD_OAUTH_TOKEN` | Альтернатива API-ключу: получите OAuth-токен по [инструкции Yandex Cloud](https://yandex.cloud/ru/docs/iam/concepts/authorization/oauth-token). Достаточно заполнить один из двух типов ключей. |
+| `YANDEXGPT_ENDPOINT` | URL OpenAI-совместимого Chat Completions API. По умолчанию: `https://ai.api.cloud.yandex.net/v1/chat/completions`. |
 
 `AUTO_RU_API_URL` и `AUTO_RU_API_TOKEN` необязательны и предназначены только для
 официально предоставленного API. Без них бот использует `config/fallback_prices.json`.
 Настраивать путь к SQLite не требуется.
 
-OAuth-токен не отправляется напрямую в Foundation Models: бот асинхронно обменивает его
-на краткоживущий IAM-токен и передает модели IAM-токен по схеме `Bearer`. Секреты не
+При наличии API-ключа бот использует заголовок `Api-Key`. OAuth-токен не отправляется
+напрямую в Foundation Models: бот асинхронно обменивает его на краткоживущий IAM-токен
+и передает модели IAM-токен по схеме `Bearer`. Секреты не
 записываются в журнал. Если ни официальный Market API, ни локальная запись для автомобиля
 не найдены, YandexGPT возвращает только наборы сырых рыночных цен, а средние значения,
 диапазон и цену быстрой продажи вычисляет Python.
@@ -151,7 +154,8 @@ Copy-Item .\backup\bot_database.db .\bot_database.db -Force
 
 ### Ошибка авторизации Yandex Cloud
 
-Обновите OAuth-токен, проверьте ID каталога и доступ каталога к Foundation Models. Модель
+Обновите API-ключ либо OAuth-токен, проверьте endpoint, ID каталога и доступ сервисного
+аккаунта к Foundation Models. Модель
 зафиксирована как `yandexgpt-5.1/latest` и не требует настройки в `.env`.
 Если токен когда-либо был опубликован в чате, логе или репозитории, немедленно отзовите его
 и создайте новый — удаление сообщения не делает раскрытый секрет снова безопасным.

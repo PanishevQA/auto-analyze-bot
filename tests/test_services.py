@@ -4,7 +4,8 @@ import pytest
 
 from services.link_generator import generate_search_links
 from services.market_api import MarketService
-from services.yandex_gpt import parse_json_response
+from config import YANDEXGPT_ENDPOINT, YANDEXGPT_MODEL_URI
+from services.yandex_gpt import YandexGPTService, parse_json_response
 
 
 def test_search_links_are_search_pages_and_encoded():
@@ -19,6 +20,14 @@ def test_parse_json_plain_and_fenced():
     assert parse_json_response('```json\n{"x": 1}\n```') == {"x": 1}
     with pytest.raises((json.JSONDecodeError, ValueError)):
         parse_json_response("не JSON")
+
+
+@pytest.mark.asyncio
+async def test_yandex_api_key_auth_and_endpoint():
+    service = YandexGPTService("folder", session=None, api_key="secret")
+    assert await service._authorization() == "Api-Key secret"
+    assert YANDEXGPT_ENDPOINT == "https://ai.api.cloud.yandex.net/v1/chat/completions"
+    assert YANDEXGPT_MODEL_URI.endswith("/yandexgpt-5.1/latest")
 
 
 @pytest.mark.asyncio

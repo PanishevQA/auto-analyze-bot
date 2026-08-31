@@ -25,7 +25,12 @@ async def main() -> None:
     await init_db()
     db = Database()
     async with aiohttp.ClientSession() as session:
-        gpt = YandexGPTService(settings.yandex_oauth_token, settings.yandex_folder_id, session)
+        gpt = YandexGPTService(
+            settings.yandex_folder_id,
+            session,
+            api_key=settings.yandex_api_key,
+            oauth_token=settings.yandex_oauth_token,
+        )
         market = MarketService(session, settings.auto_ru_api_url, settings.auto_ru_api_token)
         bot = Bot(settings.telegram_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         dispatcher = Dispatcher(db=db, gpt=gpt, market=market)

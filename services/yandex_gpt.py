@@ -17,11 +17,13 @@ class YandexGPTError(RuntimeError):
 
 
 class YandexGPTService:
-    endpoint = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
     iam_endpoint = "https://iam.api.cloud.yandex.net/iam/v1/tokens"
 
-    def __init__(self, oauth_token: str, folder_id: str,
-                 session: aiohttp.ClientSession) -> None:
+    def __init__(self, folder_id: str, session: aiohttp.ClientSession, *,
+                 api_key: str | None = None, oauth_token: str | None = None) -> None:
+        if not api_key and not oauth_token:
+            raise ValueError("Нужен Yandex API key или OAuth token")
+        self.api_key = api_key
         self.oauth_token = oauth_token
         self.folder_id = folder_id
         self.session = session
@@ -45,26 +47,36 @@ class YandexGPTService:
         return default
 
     async def _request(self, prompt: str) -> dict[str, Any]:
-        iam_token = await self._get_iam_token()
+        authorization = await self._authorization()
         headers = {
-            "Authorization": f"Bearer {iam_token}",
+            "Authorization": authorization,
             "x-folder-id": self.folder_id,
             "Content-Type": "application/json",
         }
         payload = {
-            "modelUri": YANDEX_GPT_CONFIG["model_uri"],
-            "completionOptions": {"stream": False, "temperature": YANDEX_GPT_CONFIG["temperature"],
-                                  "maxTokens": YANDEX_GPT_CONFIG["max_tokens"]},
+            "model": YANDEX_GPT_CONFIG["model_uri"],
+            "temperature": YANDEX_GPT_CONFIG["temperature"],
+            "max_tokens": YANDEX_GPT_CONFIG["max_tokens"],
             "messages": [{"role": "user", "text": prompt}],
         }
-        async with self.session.post(self.endpoint, headers=headers, json=payload,
+        # OpenAI-совместимый endpoint используется напрямую через aiohttp; библиотека
+        # openai намеренно не подключается, чтобы сохранить утвержденный стек проекта.
+        payload["messages"] = [{"role": "user", "content": prompt}]
+        async with self.session.post(YANDEX_GPT_CONFIG["endpoint"], headers=headers, json=payload,
                                      timeout=aiohttp.ClientTimeout(total=YANDEX_GPT_CONFIG["timeout"])) as response:
             response.raise_for_status()
             body = await response.json()
-        text = body["result"]["alternatives"][0]["message"]["text"]
+        text = body["choices"][0]["message"]["content"]
         return parse_json_response(text)
 
+    async def _authorization(self) -> str:
+        if self.api_key:
+            return f"Api-Key {self.api_key}"
+        return f"Bearer {await self._get_iam_token()}"
+
     async def _get_iam_token(self) -> str:
+        if not self.oauth_token:
+            raise ValueError("OAuth token не задан")
         if self._iam_token and time.monotonic() < self._iam_token_valid_until:
             return self._iam_token
         async with self._token_lock:
