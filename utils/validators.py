@@ -38,6 +38,14 @@ def validate_price(value: str) -> int:
 
 
 def validate_issues(value: str | None) -> str:
-    value = (value or "").strip()
-    return "Не указаны" if value.lower() in {"", "-", "/skip", "пропустить"} else value
+    result = validate_optional_text(value, "Описание проблем")
+    return "Не указаны" if result == "Не указано" else result
 
+
+def validate_optional_text(value: str | None, field_name: str = "Описание") -> str:
+    value = (value or "").strip()
+    if value.lower() in {"", "-", "/skip", "пропустить"}:
+        return "Не указано"
+    if len(value) > 4_000:
+        raise ValueError(f"{field_name}: не более 4000 символов.")
+    return value

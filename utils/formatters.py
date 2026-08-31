@@ -28,7 +28,10 @@ def format_summary(data: dict[str, Any], typical: list[str]) -> str:
     return (f"<b>Проверьте данные</b>\n\n🚗 {html.escape(data['car_model'])}\n"
             f"📅 {data['year']} · 🛣 {money(data['mileage'])} км\n"
             f"⚙️ {html.escape(data['engine'])}\n💰 {money(data['price'])} ₽\n"
-            f"🛠 {html.escape(data['user_issues'])}\n\n<b>Типичные проблемы:</b>\n{issues}")
+            f"📄 <b>Описание объявления:</b> {html.escape(data['listing_description'])}\n"
+            f"📷 <b>Повреждения на фото:</b> {html.escape(data['photo_damage'])}\n"
+            f"🛠 <b>Другие проблемы:</b> {html.escape(data['user_issues'])}\n\n"
+            f"<b>Типичные проблемы:</b>\n{issues}")
 
 
 def format_report(car: dict[str, Any], market: dict[str, int], items: list[dict[str, Any]],
@@ -71,4 +74,3 @@ def format_report(car: dict[str, Any], market: dict[str, int], items: list[dict[
 
 💡 <b>РЕКОМЕНДАЦИЯ</b>
 {final_recommendation(scores['profitability'], risk['risk_score'])}"""
-

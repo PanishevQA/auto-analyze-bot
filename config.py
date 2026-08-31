@@ -11,7 +11,10 @@ DATABASE_URL = f"sqlite+aiosqlite:///{BASE_DIR / 'bot_database.db'}"
 YANDEXGPT_ENDPOINT = os.getenv(
     "YANDEXGPT_ENDPOINT", "https://ai.api.cloud.yandex.net/v1/chat/completions"
 )
-YANDEXGPT_MODEL_URI = "gpt://b1gmpvdiu7blj491i69q/yandexgpt-5.1/latest"
+YANDEXGPT_MODEL_URI = os.getenv(
+    "YANDEXGPT_MODEL_URI",
+    "gpt://b1gmpvdiu7blj491i69q/yandexgpt-5.1/latest",
+)
 YANDEX_GPT_CONFIG = {
     "endpoint": YANDEXGPT_ENDPOINT,
     "model_uri": YANDEXGPT_MODEL_URI,

@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Any
+from uuid import uuid4
 
 import aiohttp
 
@@ -33,9 +34,17 @@ class YandexGPTService:
 
     async def complete_json(self, prompt: str, default: dict[str, Any], *, strict: bool = False) -> dict[str, Any]:
         last_error: Exception | None = None
+        request_id = uuid4().hex[:12]
         for attempt in range(3):
             try:
-                return await self._request(prompt)
+                logger.info(
+                    "Запрос YandexGPT id=%s, попытка=%s/3, endpoint=%s, model=%s",
+                    request_id, attempt + 1, YANDEX_GPT_CONFIG["endpoint"],
+                    YANDEX_GPT_CONFIG["model_uri"],
+                )
+                result = await self._request(prompt, request_id)
+                logger.info("Ответ YandexGPT успешно получен id=%s", request_id)
+                return result
             except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError,
                     KeyError, TypeError, ValueError) as error:
                 last_error = error
@@ -46,7 +55,7 @@ class YandexGPTService:
             raise YandexGPTError("Не удалось получить данные от YandexGPT") from last_error
         return default
 
-    async def _request(self, prompt: str) -> dict[str, Any]:
+    async def _request(self, prompt: str, request_id: str) -> dict[str, Any]:
         authorization = await self._authorization()
         headers = {
             "Authorization": authorization,
@@ -57,15 +66,18 @@ class YandexGPTService:
             "model": YANDEX_GPT_CONFIG["model_uri"],
             "temperature": YANDEX_GPT_CONFIG["temperature"],
             "max_tokens": YANDEX_GPT_CONFIG["max_tokens"],
-            "messages": [{"role": "user", "text": prompt}],
+            "messages": [{"role": "user", "content": prompt}],
         }
         # OpenAI-совместимый endpoint используется напрямую через aiohttp; библиотека
         # openai намеренно не подключается, чтобы сохранить утвержденный стек проекта.
-        payload["messages"] = [{"role": "user", "content": prompt}]
         async with self.session.post(YANDEX_GPT_CONFIG["endpoint"], headers=headers, json=payload,
                                      timeout=aiohttp.ClientTimeout(total=YANDEX_GPT_CONFIG["timeout"])) as response:
             response.raise_for_status()
             body = await response.json()
+            logger.info(
+                "YandexGPT HTTP id=%s, status=%s, usage=%s",
+                request_id, response.status, body.get("usage", "не передано"),
+            )
         text = body["choices"][0]["message"]["content"]
         return parse_json_response(text)
 

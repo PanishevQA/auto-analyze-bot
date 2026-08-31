@@ -6,7 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import Settings
+from config import Settings, YANDEXGPT_ENDPOINT, YANDEXGPT_MODEL_URI
 from database.models import close_db, init_db
 from database.queries import Database
 from handlers import build_router
@@ -38,6 +38,7 @@ async def main() -> None:
         try:
             identity = await bot.get_me()
             logger.info("Бот успешно запущен: @%s (id=%s)", identity.username, identity.id)
+            logger.info("YandexGPT настроен: endpoint=%s, model=%s", YANDEXGPT_ENDPOINT, YANDEXGPT_MODEL_URI)
             await dispatcher.start_polling(bot)
         finally:
             await bot.session.close()

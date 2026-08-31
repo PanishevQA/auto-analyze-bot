@@ -16,6 +16,8 @@ def test_all_validators():
     assert validate_engine("2.5 AT") == "2.5 AT"
     assert validate_price("10000") == 10000
     assert validate_issues("/skip") == "Не указаны"
+    assert validate_optional_text(" /skip ") == "Не указано"
+    assert validate_optional_text(" Царапина на двери ") == "Царапина на двери"
 
 
 @pytest.mark.parametrize("function,value", [
@@ -23,7 +25,7 @@ def test_all_validators():
     (validate_mileage, "500001"), (validate_mileage, "1 000"),
     (validate_engine, "  "), (validate_price, "9999"),
     (validate_price, "50000001"),
+    (validate_optional_text, "x" * 4001),
 ])
 def test_invalid(function, value):
     with pytest.raises(ValueError): function(value)
-

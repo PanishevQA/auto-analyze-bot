@@ -7,7 +7,8 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from utils.formatters import format_summary
 from utils.validators import (validate_car_model, validate_engine, validate_issues,
-                              validate_mileage, validate_price, validate_year)
+                              validate_mileage, validate_optional_text, validate_price,
+                              validate_year)
 
 router = Router()
 
@@ -18,6 +19,8 @@ class Questionnaire(StatesGroup):
     waiting_mileage = State()
     waiting_engine = State()
     waiting_price = State()
+    waiting_listing_description = State()
+    waiting_photo_damage = State()
     waiting_issues = State()
     waiting_confirmation = State()
 
@@ -68,8 +71,28 @@ async def engine(message: Message, state: FSMContext) -> None:
 
 @router.message(Questionnaire.waiting_price)
 async def price(message: Message, state: FSMContext) -> None:
-    await _save(message, state, "price", validate_price, Questionnaire.waiting_issues,
-                "Опишите известные проблемы или отправьте /skip:")
+    await _save(
+        message, state, "price", validate_price, Questionnaire.waiting_listing_description,
+        "Вставьте описание из объявления или отправьте /skip:",
+    )
+
+
+@router.message(Questionnaire.waiting_listing_description)
+async def listing_description(message: Message, state: FSMContext) -> None:
+    await _save(
+        message, state, "listing_description", validate_optional_text,
+        Questionnaire.waiting_photo_damage,
+        "Опишите повреждения, которые видны на фото, или отправьте /skip:",
+    )
+
+
+@router.message(Questionnaire.waiting_photo_damage)
+async def photo_damage(message: Message, state: FSMContext) -> None:
+    await _save(
+        message, state, "photo_damage", validate_optional_text,
+        Questionnaire.waiting_issues,
+        "Опишите остальные известные проблемы или отправьте /skip:",
+    )
 
 
 @router.message(Questionnaire.waiting_issues)
@@ -92,4 +115,3 @@ async def edit(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Questionnaire.waiting_car_model)
     await callback.message.answer("Введите марку и модель заново:")
     await callback.answer()
-
