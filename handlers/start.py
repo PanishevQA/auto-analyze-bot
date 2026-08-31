@@ -36,3 +36,4 @@ async def choose_region(callback: CallbackQuery, db) -> None:
     await db.set_region(callback.from_user.id, region)
     await callback.message.edit_text(f"Регион: <b>{region}</b>", reply_markup=analyze_keyboard())
     await callback.answer()
+

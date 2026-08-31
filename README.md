@@ -1,157 +1,71 @@
 # Telegram-бот «Оценщик авто для перепродажи (РФ)»
 
-Асинхронный бот для предварительной оценки экономики перепродажи подержанного автомобиля.
-Он сравнивает рынок выбранного региона со всей Россией, запрашивает у YandexGPT только
-исходные сведения о ремонте и рисках, а все финансовые расчеты выполняет в Python.
-
-## Возможности
-
-- пошаговый опрос с проверкой модели, года, пробега и цены;
-- выбор одного из шести регионов;
-- рыночные данные из официального API или локального fallback-файла;
-- смета, оценка риска, чек-лист осмотра и ссылки только на поисковые страницы запчастей;
-- история пяти последних расчетов с защитой по Telegram ID;
-- автоматическая локальная база SQLite без отдельного сервера.
+Асинхронный Telegram-бот проводит пользователя через FSM-опрос, получает от YandexGPT
+типичные неисправности, сырые цены ремонта и оценку риска, сравнивает рынок выбранного
+региона со всей РФ и рассчитывает экономику сделки в Python. При недоступности официального
+Market API используются локальные fallback-данные. Парсинг сайтов и другие LLM не используются.
 
 ## Требования
 
-- Windows 10 или Windows 11;
 - Python 3.11 или новее;
-- Telegram-бот и учетная запись Yandex Cloud с доступом к Foundation Models.
+- локальный PostgreSQL 15+;
+- Telegram Bot Token и доступ к Yandex Cloud Foundation Models.
 
-## Установка в Windows PowerShell
+Docker не нужен и проект его не использует.
 
-Откройте PowerShell в каталоге проекта и выполните:
+## Установка
 
-```powershell
+```bash
 python -m venv venv
-.\venv\Scripts\activate
-python -m pip install --upgrade pip
+source venv/bin/activate              # Windows PowerShell: venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Если выполнение скриптов запрещено, разрешите его только для текущего процесса:
+## PostgreSQL
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\venv\Scripts\activate
+Создайте локальную БД и примените идемпотентную схему:
+
+```bash
+createdb auto_analyze
+psql -d auto_analyze -f database/schema.sql
 ```
 
-## Настройка переменных окружения
+При запуске приложение также автоматически выполняет `schema.sql`. Таблица `ai_cache`
+хранит ответы YandexGPT 24 часа; Redis не требуется.
 
-Создайте рабочий файл настроек:
+## Переменные окружения
 
-```powershell
-copy .env.example .env
-notepad .env
+```bash
+cp .env.example .env
 ```
 
-Обязательные поля:
+Заполните обязательные `TELEGRAM_BOT_TOKEN`, `YANDEX_CLOUD_OAUTH_TOKEN`,
+`YANDEX_CLOUD_FOLDER_ID` и `DATABASE_URL`. Необязательные `AUTO_RU_API_URL` и
+`AUTO_RU_API_TOKEN` включают официальный Market API. Если URL отсутствует или запрос
+завершается ошибкой, читается `config/fallback_prices.json`.
 
-| Поле | Назначение и получение |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Создайте бота через [@BotFather](https://t.me/BotFather), выполните `/newbot` и скопируйте токен. |
-| `YANDEX_CLOUD_OAUTH_TOKEN` | Авторизуйтесь в Yandex и получите OAuth-токен по [инструкции Yandex Cloud](https://yandex.cloud/ru/docs/iam/concepts/authorization/oauth-token). |
-| `YANDEX_CLOUD_FOLDER_ID` | Откройте нужный каталог в [консоли Yandex Cloud](https://console.yandex.cloud/); идентификатор указан на странице каталога. |
+## Запуск из IDE или терминала
 
-`AUTO_RU_API_URL` и `AUTO_RU_API_TOKEN` необязательны и предназначены только для
-официально предоставленного API. Без них бот использует `config/fallback_prices.json`.
-Настраивать путь к SQLite не требуется.
+Выберите интерпретатор созданного виртуального окружения и запустите `main.py`, либо:
 
-## Запуск
-
-```powershell
-.\venv\Scripts\activate
+```bash
 python main.py
 ```
 
-При первом запуске рядом с `main.py` автоматически создается `bot_database.db`.
+Бот работает через aiogram long polling. Команда `/start` начинает выбор региона.
 
-## Команды бота
+## Промпты
 
-| Команда | Назначение |
-|---|---|
-| `/start` | Регистрация, выбор региона и начало нового анализа. |
-| `/history` | Список не более пяти последних расчетов текущего пользователя. |
-| `/history <ID>` | Детальный отчет по указанному ID, если он принадлежит пользователю. |
-
-## Структура проекта
-
-```text
-main.py                         точка запуска aiogram
-config.py                       переменные окружения и путь SQLite
-handlers/start.py               команда /start и регионы
-handlers/questionnaire.py       FSM-опрос и подтверждение
-handlers/analysis.py            анализ и сохранение отчета
-handlers/history.py             безопасный просмотр истории
-database/models.py              async SQLAlchemy-модели и создание БД
-database/queries.py             запросы, JSON-сериализация и лимит истории
-services/yandex_gpt.py          YandexGPT, JSON-разбор и повторы
-services/market_api.py          официальный API и fallback
-services/calculator.py          финансовая математика Python
-services/link_generator.py      ссылки на поисковую выдачу
-prompts/                        редактируемые шаблоны YandexGPT
-config/fallback_prices.json     резервные рыночные цены
-tests/                          автоматические тесты
-```
-
-В JSON-примерах промптов литеральные фигурные скобки записываются как `{{` и `}}`,
-поскольку шаблоны заполняются методом `format_map`.
-
-## База данных и история
-
-SQLite хранится в файле `bot_database.db`; JSON-поля сериализуются как текст. После каждой
-записи бот оставляет только пять новейших расчетов конкретного пользователя. Запрос детального
-отчета одновременно фильтруется по ID расчета и Telegram ID владельца.
-
-Для просмотра остановите бота, установите
-[DB Browser for SQLite](https://sqlitebrowser.org/dl/), откройте `bot_database.db` и выберите
-вкладку **Browse Data**. Не редактируйте базу во время работы бота.
-
-## Резервное копирование
-
-Сначала остановите бота сочетанием `Ctrl+C`, затем выполните:
-
-```powershell
-New-Item -ItemType Directory -Force backup
-Copy-Item .\bot_database.db .\backup\bot_database.db
-```
-
-Для восстановления при остановленном боте:
-
-```powershell
-Copy-Item .\backup\bot_database.db .\bot_database.db -Force
-```
-
-## Устранение неполадок
-
-### Команда `python` не найдена
-
-Переустановите Python с [python.org](https://www.python.org/downloads/windows/) и включите
-флажок **Add Python to PATH**. Перезапустите PowerShell и проверьте `python --version`.
-
-### Не активируется виртуальное окружение
-
-Выполните `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, затем повторите
-`.\venv\Scripts\activate`. Настройка действует только до закрытия окна.
-
-### Бот сообщает о незаданных переменных
-
-Убедитесь, что файл называется именно `.env`, расположен рядом с `main.py`, а значения после
-знака `=` не заключены в кавычки и не содержат лишних пробелов.
-
-### Ошибка авторизации Yandex Cloud
-
-Обновите OAuth-токен, проверьте ID каталога и доступ каталога к Foundation Models. Модель
-зафиксирована как `yandexgpt-5.1/latest` и не требует настройки в `.env`.
-
-### Файл базы заблокирован
-
-Закройте DB Browser for SQLite или отмените в нем незавершенную транзакцию, затем перезапустите
-бота. Не храните рабочую базу в каталоге, который одновременно синхронизируется несколькими ПК.
+Шаблоны находятся в `prompts/`: `typical_issues.txt`, `repair_estimate.txt` и
+`risk_assessment.txt`. Поля в фигурных скобках заполняются данными FSM. Литеральные
+JSON-скобки должны быть удвоены (`{{` и `}}`), поскольку применяется `format_map`.
+YandexGPT возвращает данные, а суммирование бюджета, прибыль и рентабельность вычисляет Python.
 
 ## Тестирование
 
-```powershell
+```bash
 pytest --cov=. --cov-report=term-missing
 ```
+
+Интеграция с внешними сервисами построена через внедрение зависимостей `db`, `gpt` и
+`market`, поэтому тесты не требуют реальных токенов или сетевого доступа.

@@ -1,8 +1,8 @@
 aiogram>=3.4,<4
 aiohttp>=3.9,<4
-aiosqlite>=0.20,<1
-SQLAlchemy>=2.0,<3
+asyncpg>=0.29,<1
 python-dotenv>=1.0,<2
 pytest>=8,<9
 pytest-asyncio>=0.23,<1
 pytest-cov>=5,<6
+

@@ -21,7 +21,7 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, gpt, market) -
     if user is None:
         await callback.message.answer("Пользователь не найден. Нажмите /start.")
         return
-    data["region"] = user.region
+    data["region"] = user["region"]
     try:
         market_data = await market.prices(data["car_model"], data["year"], data["region"])
         repair = await gpt.from_template("repair_estimate.txt", data, {"repair_items": []})
@@ -75,3 +75,4 @@ def sanitize_risk(value) -> dict:
     checklist = value.get("inspection_checklist", [])
     return {"risk_score": score, "risk_explanation": str(value.get("risk_explanation", "Нет данных"))[:150],
             "inspection_checklist": [str(x) for x in checklist[:7]] if isinstance(checklist, list) else []}
+

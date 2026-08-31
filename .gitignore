@@ -6,6 +6,4 @@ __pycache__/
 .coverage
 htmlcov/
 *.py[cod]
-bot_database.db
-bot_database.db-shm
-bot_database.db-wal
+
