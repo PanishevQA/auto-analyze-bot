@@ -1,0 +1,11 @@
+.env
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+*.py[cod]
+bot_database.db
+bot_database.db-shm
+bot_database.db-wal
