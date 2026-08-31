@@ -1,34 +1,26 @@
 import asyncio
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import aiohttp
 
-from config import YANDEX_MODEL_URI
-from database.queries import Database
+from config import YANDEX_GPT_CONFIG
 
 
 class YandexGPTService:
     endpoint = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
-    def __init__(self, oauth_token: str, folder_id: str, database: Database,
+    def __init__(self, oauth_token: str, folder_id: str,
                  session: aiohttp.ClientSession) -> None:
         self.oauth_token = oauth_token
         self.folder_id = folder_id
-        self.database = database
         self.session = session
 
     async def complete_json(self, prompt: str, default: dict[str, Any]) -> dict[str, Any]:
-        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
-        cached = await self.database.get_cache(prompt_hash)
-        if cached is not None:
-            return cached
         for attempt in range(3):
             try:
                 result = await self._request(prompt)
-                await self.database.set_cache(prompt_hash, result)
                 return result
             except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError,
                     KeyError, TypeError, ValueError):
@@ -43,12 +35,13 @@ class YandexGPTService:
             "Content-Type": "application/json",
         }
         payload = {
-            "modelUri": YANDEX_MODEL_URI,
-            "completionOptions": {"stream": False, "temperature": 0.3, "maxTokens": 2000},
+            "modelUri": YANDEX_GPT_CONFIG["model_uri"],
+            "completionOptions": {"stream": False, "temperature": YANDEX_GPT_CONFIG["temperature"],
+                                  "maxTokens": YANDEX_GPT_CONFIG["max_tokens"]},
             "messages": [{"role": "user", "text": prompt}],
         }
         async with self.session.post(self.endpoint, headers=headers, json=payload,
-                                     timeout=aiohttp.ClientTimeout(total=60)) as response:
+                                     timeout=aiohttp.ClientTimeout(total=YANDEX_GPT_CONFIG["timeout"])) as response:
             response.raise_for_status()
             body = await response.json()
         text = body["result"]["alternatives"][0]["message"]["text"]
@@ -70,4 +63,3 @@ def parse_json_response(text: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("Ожидался JSON-объект")
     return value
-
