@@ -1,0 +1,30 @@
+{
+  "version": "repair-catalog-2026.1",
+  "region_coefficients": {
+    "Весь РФ": "1.00",
+    "Москва и МО": "1.20",
+    "Санкт-Петербург и ЛО": "1.15",
+    "Новосибирск и НО": "1.05",
+    "Екатеринбург": "1.05",
+    "Красноярск": "1.08"
+  },
+  "items": {
+    "rust_minor": {"min_rub": 3000, "likely_rub": 6000, "max_rub": 12000, "description": "Локальная обработка поверхностной коррозии", "requires_manual_check": true},
+    "rust_medium": {"min_rub": 12000, "likely_rub": 25000, "max_rub": 50000, "description": "Ремонт коррозии элемента", "requires_manual_check": true},
+    "rust_severe": {"min_rub": 30000, "likely_rub": 60000, "max_rub": 120000, "description": "Сложный кузовной ремонт коррозии", "requires_manual_check": true},
+    "scratch_minor": {"min_rub": 1500, "likely_rub": 3000, "max_rub": 6000, "description": "Полировка неглубокой царапины", "requires_manual_check": false},
+    "scratch_deep": {"min_rub": 7000, "likely_rub": 12000, "max_rub": 20000, "description": "Локальная окраска глубокой царапины", "requires_manual_check": false},
+    "dent_minor": {"min_rub": 3000, "likely_rub": 6000, "max_rub": 10000, "description": "Удаление небольшой вмятины", "requires_manual_check": false},
+    "dent_medium": {"min_rub": 8000, "likely_rub": 15000, "max_rub": 25000, "description": "Ремонт вмятины элемента", "requires_manual_check": false},
+    "dent_severe": {"min_rub": 18000, "likely_rub": 35000, "max_rub": 70000, "description": "Сложный ремонт деформированного элемента", "requires_manual_check": true},
+    "paint_element": {"min_rub": 10000, "likely_rub": 16000, "max_rub": 25000, "description": "Окраска одного кузовного элемента", "requires_manual_check": false},
+    "bumper_repair": {"min_rub": 5000, "likely_rub": 9000, "max_rub": 16000, "description": "Ремонт бампера", "requires_manual_check": false},
+    "bumper_paint": {"min_rub": 9000, "likely_rub": 15000, "max_rub": 23000, "description": "Окраска бампера", "requires_manual_check": false},
+    "bumper_replace": {"min_rub": 18000, "likely_rub": 35000, "max_rub": 70000, "description": "Замена бампера", "requires_manual_check": true},
+    "headlight_damage": {"min_rub": 8000, "likely_rub": 20000, "max_rub": 60000, "description": "Ремонт или замена фары", "requires_manual_check": true},
+    "glass_damage": {"min_rub": 8000, "likely_rub": 18000, "max_rub": 40000, "description": "Замена поврежденного стекла", "requires_manual_check": true},
+    "tire_worn": {"min_rub": 16000, "likely_rub": 28000, "max_rub": 50000, "description": "Комплект шин", "requires_manual_check": false},
+    "interior_wear": {"min_rub": 3000, "likely_rub": 8000, "max_rub": 20000, "description": "Локальное восстановление салона", "requires_manual_check": true},
+    "interior_cleaning": {"min_rub": 4000, "likely_rub": 7000, "max_rub": 12000, "description": "Химчистка салона", "requires_manual_check": false}
+  }
+}

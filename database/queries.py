@@ -97,8 +97,12 @@ class Database:
     @staticmethod
     def _history_item(record: Calculation) -> dict[str, Any]:
         car = json.loads(record.car_data)
-        return {"id": record.id, "car_model": car.get("car_model", "Автомобиль"),
-                "year": car.get("year", "—"), "mileage": car.get("mileage", 0),
+        car_model = car.get("car_model") or " ".join(
+            part for part in (str(car.get("make", "")), str(car.get("model", ""))) if part
+        ) or "Автомобиль"
+        return {"id": record.id, "car_model": car_model,
+                "year": car.get("year", "—"),
+                "mileage": car.get("mileage", car.get("mileage_km", 0)) or 0,
                 "created_at": record.created_at}
 
     @staticmethod
