@@ -1,0 +1,88 @@
+# Auto Analyze Bot — P1
+
+Личный асинхронный Telegram-бот для предварительной оценки автомобиля под перепродажу.
+Рынок получает только через APIpoint, видимое состояние — через Yandex AI Studio Qwen,
+стоимость ремонта — из локального каталога, а деньги и verdict рассчитывает `DealEngine`.
+
+## Безопасность и ограничения
+
+- Доступ разрешен только `OWNER_TELEGRAM_IDS`.
+- Drom работает исключительно в manual mode: ссылка валидируется и сохраняется, HTTP-запрос к Drom не выполняется.
+- Фото не заменяют осмотр; vision не оценивает агрегаты, документы, юридическую чистоту или скрытые дефекты.
+- LLM не определяет рынок, рублевый ремонт, прибыль, ROI, max buy или verdict.
+- Бинарные фото и временные пути не сохраняются; временный каталог удаляется в `finally`.
+
+## Установка (PowerShell)
+
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+notepad .env
+python main.py
+```
+
+## Обязательные настройки
+
+```env
+TELEGRAM_BOT_TOKEN=
+OWNER_TELEGRAM_IDS=123456789
+APIPOINT_API_URL=https://apipoint.ru/api/call
+APIPOINT_TOKEN=
+```
+
+Без vision-настроек бот запускается в degraded mode: рынок и экономика работают, состояние
+по фото получает `UNAVAILABLE`, поэтому выгодная экономика приводит к WATCH, а не BUY.
+
+```env
+YANDEX_AI_ENDPOINT=
+YANDEX_AI_API_KEY=
+YANDEX_VISION_MODEL_URI=gpt://<folder_id>/qwen3.6-35b-a3b
+```
+
+Остальные timeout, photo limit и финансовые значения перечислены в `.env.example`.
+
+## Сценарий
+
+1. `/start`, выбор региона и «Проанализировать авто».
+2. Выбор Drom/manual; Drom-ссылка используется только как источник.
+3. Отдельный ввод марки, модели, года, поколения, пробега, цены, двигателя, топлива,
+   мощности, КПП, привода, кузова и описания.
+4. Загрузка до 20 Telegram Photo/документов и управление списком.
+5. Подтверждение платных запросов с idempotency key.
+6. Параллельный APIpoint и vision, затем RepairCatalog и DealEngine.
+7. Короткий и подробный отчет, сохранение в SQLite.
+8. `/history <ID>` → «Пересчитать с другой ценой» без APIpoint и vision.
+
+## APIpoint
+
+Клиент всегда выполняет последовательные POST на `APIPOINT_API_URL`:
+
+- `sources=avgcarprice`, цена только из `result.avgcarprice.result.average`;
+- при ошибке — `sources=carprices`, цена только из `result.carprices.result.avg_price`.
+
+Верхние `price` и `balance` сохраняются как стоимость запроса и баланс, но никогда не
+используются как рынок. Timeout/429/5xx получают максимум один retry; обычный 4xx — без retry.
+
+## SQLite и миграция
+
+`database/migrations.py` идемпотентно добавляет P1-колонки к старой таблице, не удаляя записи.
+Хранятся normalized JSON, статусы блоков, версии, metadata фото и parent calculation.
+
+## Проверка
+
+```powershell
+python -m compileall -q .
+pytest -q
+pytest --cov=. --cov-report=term-missing
+```
+
+Все HTTP-тесты используют `httpx.MockTransport`; реальные платные запросы запрещены.
+
+## Интеграционное ограничение Yandex
+
+Payload Responses API изолирован в `YandexVisionClient.build_payload`. В среде разработки
+официальная страница документации была недоступна через сетевой proxy (403), поэтому перед
+первым платным запуском владелец должен сверить `input_image`/`json_schema` поля с актуальной
+документацией своего Yandex AI Studio аккаунта и при необходимости изменить только builder.
