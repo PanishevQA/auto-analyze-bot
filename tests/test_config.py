@@ -21,3 +21,14 @@ def test_decimal_financial_settings(monkeypatch):
     settings = Settings.from_env()
     assert settings.owner_telegram_ids == frozenset({123})
     assert settings.quick_sale_coefficient == Decimal("0.91")
+
+def test_authorized_browser_requires_permission(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN","test"); monkeypatch.setenv("OWNER_TELEGRAM_IDS","1")
+    monkeypatch.setenv("APIPOINT_TOKEN","test"); monkeypatch.setenv("PARTS_SEARCH_MODE","AUTHORIZED_DROM_BROWSER")
+    monkeypatch.setenv("DROM_BAZA_PERMISSION_CONFIRMED","false")
+    with pytest.raises(RuntimeError,match="разрешения правообладателя"): Settings.from_env()
+
+def test_drom_start_url_allowlist(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN","test"); monkeypatch.setenv("OWNER_TELEGRAM_IDS","1")
+    monkeypatch.setenv("APIPOINT_TOKEN","test"); monkeypatch.setenv("DROM_BAZA_START_URL","https://evil.test/")
+    with pytest.raises(RuntimeError,match="baza.drom.ru"): Settings.from_env()

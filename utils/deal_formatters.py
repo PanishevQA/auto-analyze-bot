@@ -7,11 +7,14 @@ from utils.formatters import money
 def format_deal_summary(vehicle: VehicleSpec, deal: DealResult, market: MarketEstimate | None = None) -> str:
     risk = deal.reasons[0] if deal.reasons else "Требуется очная проверка"
     test_banner = "🧪 <b>ТЕСТОВЫЙ РЕЖИМ</b>\nРыночная стоимость имитирована. Запрос к APIpoint не выполнялся.\n\n" if market and market.is_test_data else ""
-    return test_banner + (
+    max_buy=money(deal.max_buy_price_rub) + " ₽" if deal.economics_complete else "не рассчитана"
+    profit_label="Ожидаемая прибыль" if deal.economics_complete else "Предварительная прибыль без неизвестных деталей"
+    incomplete="⚠️ <b>Экономика неполная</b>\n" if not deal.economics_complete else ""
+    return test_banner + incomplete + (
         f"<b>{deal.verdict.value}</b> — {html.escape(vehicle.make)} {html.escape(vehicle.model)}\n"
         f"Цена продавца: {money(vehicle.asking_price_rub)} ₽\n"
-        f"Максимальная цена покупки: {money(deal.max_buy_price_rub)} ₽\n"
-        f"Ожидаемая прибыль: {money(deal.expected_profit_rub)} ₽\n"
+        f"Максимальная цена покупки: {max_buy}\n"
+        f"{profit_label}: {money(deal.expected_profit_rub)} ₽\n"
         f"Главный фактор: {html.escape(risk)}"
     )
 
@@ -58,7 +61,8 @@ def format_deal_details(
         bargaining.append(f"Для целевой экономики требуется скидка {money(deal.required_discount_rub)} ₽")
     arguments = "\n".join(f"• {html.escape(item)}" for item in bargaining) or "• Подтвержденных аргументов пока нет"
     ready_parts=[part for part in parts if part.status is PartsStatus.READY]
-    missing=[name for part in parts if part.status is not PartsStatus.READY for name in part.missing_parts]
+    missing=[name for part in parts if part.status is not PartsStatus.READY
+             for name in (part.missing_parts or [str((part.query_data or {}).get("part_name","деталь"))])]
     parts_total=sum(part.selected_price_rub or 0 for part in ready_parts)
     parts_lines="\n".join(f"• {html.escape(part.offers[0].part_name if part.offers else 'Деталь')}: {money(part.selected_price_rub or 0)} ₽" for part in ready_parts) or "• Не требуются или цена не получена"
     quote_meta=""
@@ -69,6 +73,11 @@ def format_deal_details(
                     f"\nОбновлено: {quote_time}"
                     f"\nПредложений: {sum(item.offers_count for item in ready_parts)}")
     incomplete=("\n⚠️ Экономика рассчитана не полностью. Не оценено: " + ", ".join(map(html.escape,missing))) if missing else ""
+    manual_queries="\n".join(f"• Поиск: {html.escape(str((part.query_data or {}).get('query','')))}\n  {html.escape(str((part.query_data or {}).get('manual_url','')))}"
+        for part in parts if (part.query_data or {}).get("manual_url"))
+    if manual_queries: incomplete += "\nОткройте Drom Базу вручную и пришлите 3–10 ссылок или скриншоты:\n"+manual_queries
+    max_buy_detail=f"{money(deal.max_buy_price_rub)} ₽" if deal.economics_complete else "не рассчитана"
+    excellent_detail=f"{money(deal.excellent_buy_price_rub)} ₽" if deal.economics_complete else "не рассчитана"
     return f"""💹 <b>РЫНОК</b>
 {market_block}
 
@@ -104,8 +113,8 @@ def format_deal_details(
 Прибыль: {money(deal.expected_profit_rub)} ₽
 ROI: {deal.roi_percent}%
 Безубыточная цена: {money(deal.break_even_buy_price_rub)} ₽
-Максимальная цена покупки: {money(deal.max_buy_price_rub)} ₽
-Отличная цена: {money(deal.excellent_buy_price_rub)} ₽
+Максимальная цена покупки: {max_buy_detail}
+Отличная цена: {excellent_detail}
 Требуемая скидка: {money(deal.required_discount_rub)} ₽
 Целевая прибыль: {money(deal.target_profit_rub)} ₽
 

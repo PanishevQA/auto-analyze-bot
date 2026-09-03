@@ -53,6 +53,12 @@ class Calculation(Base):
     parts_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     parts_quoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     parts_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    parts_search_mode: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    parts_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    parts_complete: Mapped[bool | None] = mapped_column(nullable=True)
+    parts_query_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parts_permission_confirmed: Mapped[bool | None] = mapped_column(nullable=True)
+    parts_prompt_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(),
                                                   onupdate=func.current_timestamp())

@@ -4,7 +4,8 @@ from .domain import (
     MarketSource, PhotoReference,
     RepairEstimate, RepairItem, SourceMode, VehicleSpec, VisibleDefect,
 )
-from .domain import PartCondition, PartOffer, PartPriceEstimate, PartSearchQuery, PartsStatus
+from .domain import (MatchStatus, PartCondition, PartOffer, PartPriceEstimate,
+                     PartSearchQuery, PartsSearchMode, PartsStatus)
 
 __all__ = [
     "AnalysisStatus", "ConditionAssessment", "Coverage", "DealResult", "DealVerdict",
@@ -12,4 +13,5 @@ __all__ = [
     "MarketSource", "PhotoReference",
     "RepairEstimate", "RepairItem", "SourceMode", "VehicleSpec", "VisibleDefect",
     "PartCondition", "PartOffer", "PartPriceEstimate", "PartSearchQuery", "PartsStatus",
+    "MatchStatus", "PartsSearchMode",
 ]

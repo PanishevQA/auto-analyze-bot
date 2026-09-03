@@ -100,5 +100,9 @@ async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngin
             "parts_data":[p.model_dump(mode="json") for p in parts],"parts_status":old.get("parts_status"),
             "parts_quoted_at":old.get("parts_quoted_at"),"parts_provider":old.get("parts_provider"),
             "test_mode":old.get("test_mode"),"market_status":old.get("market_status"),
-            "vision_status":old.get("vision_status"),**old.get("versions",{})})
+            "vision_status":old.get("vision_status"),"parts_search_mode":old.get("parts_search_mode"),
+            "parts_source":old.get("parts_source"),"parts_complete":parts_complete,
+            "parts_query_data":old.get("parts_query_data"),
+            "parts_permission_confirmed":old.get("parts_permission_confirmed"),
+            "parts_prompt_version":old.get("parts_prompt_version"),**old.get("versions",{})})
     await state.clear(); await message.answer(summary); await answer_long_html(message,details)

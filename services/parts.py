@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+import hashlib
 from statistics import median
 from typing import Protocol
 
-from schemas import PartCondition, PartOffer, PartPriceEstimate, PartSearchQuery, PartsStatus
+from schemas import MatchStatus, PartCondition, PartOffer, PartPriceEstimate, PartSearchQuery, PartsStatus
 
 
 class PartsPriceProvider(Protocol):
@@ -12,14 +13,20 @@ class PartsPriceProvider(Protocol):
 
 
 def normalize_offers(offers: list[PartOffer], *, condition: PartCondition,
-                     quantity: int = 1, provider: str | None = None) -> PartPriceEstimate:
-    valid = [offer for offer in offers if offer.condition is condition and offer.in_stock
-             and offer.unit_price_rub > 0]
+                     quantity: int = 1, provider: str | None = None,
+                     min_offers: int = 1) -> PartPriceEstimate:
+    deduplicated={str(offer.offer_url) if offer.offer_url else f"no-url-{index}":offer
+                  for index,offer in enumerate(offers)}
+    valid = [offer for offer in deduplicated.values() if offer.condition is condition and offer.in_stock
+             and offer.unit_price_rub > 0 and offer.match_status in {MatchStatus.EXACT,MatchStatus.LIKELY}]
     totals = sorted((offer.unit_price_rub + offer.delivery_price_rub) * quantity for offer in valid)
     now = max((offer.fetched_at for offer in valid), default=datetime.now(timezone.utc))
     if not totals:
         return PartPriceEstimate(status=PartsStatus.NO_MATCH, provider=provider,
                                  fetched_at=now)
+    if len(valid)<min_offers:
+        return PartPriceEstimate(status=PartsStatus.INSUFFICIENT_DATA,offers_count=len(valid),offers=valid,
+            provider=provider or (valid[0].provider if valid else None),fetched_at=now)
     # IQR fence avoids obvious outliers when enough observations exist.
     if len(totals) >= 4:
         lower = totals[:len(totals)//2]; upper = totals[(len(totals)+1)//2:]
@@ -44,10 +51,15 @@ class CachedPartsProvider:
         self.cache: dict[str, PartPriceEstimate] = {}
 
     async def search(self, query: PartSearchQuery) -> PartPriceEstimate:
-        key = query.model_dump_json(exclude={"vin"}) + (query.vin or "")
+        material=query.model_dump_json()+"|"+self.provider.__class__.__name__
+        key = hashlib.sha256(material.encode()).hexdigest()
         cached = self.cache.get(key); now = datetime.now(timezone.utc)
         if cached and cached.fetched_at and now - cached.fetched_at <= self.ttl: return cached
         fresh = await self.provider.search(query)
         if fresh.status is PartsStatus.READY: self.cache[key] = fresh
         elif cached: return cached.model_copy(update={"status": PartsStatus.STALE})
         return fresh
+
+    async def close(self) -> None:
+        close=getattr(self.provider,"close",None)
+        if close: await close()

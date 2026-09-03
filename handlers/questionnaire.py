@@ -197,7 +197,7 @@ async def photos_control(callback,state):
     action=callback.data.split(":",1)[1]; data=await state.get_data(); collection=PhotoCollection([PhotoReference.model_validate(x) for x in data.get("photos",[])])
     if action=="last": collection.remove_last(); await state.update_data(photos=collection.dump())
     elif action=="clear": collection.clear(); await state.update_data(photos=[])
-    elif action=="skip": collection.clear(); await state.update_data(photos=[]); await show_confirmation(callback.message,state)
+    elif action=="skip": collection.clear(); await state.update_data(photos=[],editing_field=None); await show_confirmation(callback.message,state)
     elif action=="done": await state.update_data(editing_field=None); await show_confirmation(callback.message,state)
     if action in {"last","clear"}: await callback.message.answer(f"Фотографий: {len(collection.photos)}",reply_markup=photo_keyboard())
     await callback.answer()

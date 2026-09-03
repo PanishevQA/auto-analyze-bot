@@ -1,5 +1,12 @@
 # Журнал изменений
 
+## P1 — browser parts search
+
+- Добавлены DISABLED, MANUAL_BROWSER и permission-gated AUTHORIZED_DROM_BROWSER.
+- Добавлены ограниченный parts-agent, сопоставление карточек и Playwright provider.
+- Добавлены BLOCKED/INSUFFICIENT_DATA, SHA-256 cache keys и миграция SQLite v3.
+- Запчасть теперь берётся из VisibleDefect, а итог анализа сохраняется атомарно.
+
 ## P1 — стабилизация, TEST_MODE и цены запчастей
 
 - Числовой `status=200` APIpoint, строгая классификация permanent/temporary ошибок и Retry-After.

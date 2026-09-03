@@ -68,6 +68,11 @@ class Database:
                 test_mode=meta.get("test_mode"), parts_data=json.dumps(meta.get("parts_data"), ensure_ascii=False),
                 parts_status=meta.get("parts_status"), parts_quoted_at=meta.get("parts_quoted_at"),
                 parts_provider=meta.get("parts_provider"),
+                parts_search_mode=meta.get("parts_search_mode"),parts_source=meta.get("parts_source"),
+                parts_complete=meta.get("parts_complete"),
+                parts_query_data=json.dumps(meta.get("parts_query_data"),ensure_ascii=False),
+                parts_permission_confirmed=meta.get("parts_permission_confirmed"),
+                parts_prompt_version=meta.get("parts_prompt_version"),
             )
             session.add(calculation)
             await session.flush()
@@ -102,7 +107,7 @@ class Database:
     async def complete_analysis(self, calculation_id: int, **values: Any) -> None:
         serialized = {key: json.dumps(value, ensure_ascii=False) for key, value in values.items()
                       if key in {"car_data", "market_data", "repair_estimate", "scores",
-                                 "photos_metadata", "condition_data", "parts_data"}}
+                                 "photos_metadata", "condition_data", "parts_data", "parts_query_data"}}
         serialized.update({key: value for key, value in values.items() if key not in serialized})
         async with self.session_factory() as session:
             await session.execute(update(Calculation).where(Calculation.id == calculation_id).values(**serialized))
@@ -169,6 +174,11 @@ class Database:
                 "parts_data": json.loads(record.parts_data) if record.parts_data else None,
                 "parts_status": record.parts_status, "parts_quoted_at": record.parts_quoted_at,
                 "parts_provider": record.parts_provider, "test_mode": record.test_mode,
+                "parts_search_mode":record.parts_search_mode,"parts_source":record.parts_source,
+                "parts_complete":record.parts_complete,
+                "parts_query_data":json.loads(record.parts_query_data) if record.parts_query_data else None,
+                "parts_permission_confirmed":record.parts_permission_confirmed,
+                "parts_prompt_version":record.parts_prompt_version,
                 "vision_status": record.vision_status, "market_status": record.market_status,
                 "versions": {"model_uri": record.model_uri, "prompt_version": record.prompt_version,
                     "adapter_version": record.adapter_version, "catalog_version": record.catalog_version,

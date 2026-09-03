@@ -11,7 +11,8 @@ from database.models import close_db, init_db
 from database.queries import Database
 from handlers import build_router
 from services.apipoint import APIpointClient, FakeAPIpointClient
-from services.parts import CachedPartsProvider, UnconfiguredPartsProvider
+from services.parts_orchestrator import PartsSearchOrchestrator, build_parts_provider
+from schemas import PartCondition
 from services.deal_engine import DealEngine, DealSettings
 from services.repair_catalog import RepairCatalog
 from services.yandex_vision import YandexVisionClient
@@ -51,7 +52,6 @@ async def main() -> None:
             high_confidence_offers=settings.apipoint_high_confidence_offers,
             limited_confidence_offers=settings.apipoint_limited_confidence_offers,
         )
-        parts_provider = CachedPartsProvider(UnconfiguredPartsProvider(), settings.parts_price_cache_ttl_hours)
         if settings.test_mode:
             logger.warning("TEST MODE enabled: APIpoint network calls are disabled; Yandex AI and parts providers are unaffected")
         vision = YandexVisionClient(client, endpoint=settings.yandex_ai_endpoint,
@@ -62,11 +62,14 @@ async def main() -> None:
             read=settings.yandex_vision_read_timeout, write=settings.yandex_vision_read_timeout,
             pool=settings.yandex_vision_connect_timeout)
         vision.max_retries = settings.yandex_vision_max_retries
+        parts_provider=await build_parts_provider(settings,vision)
+        parts_orchestrator=PartsSearchOrchestrator(parts_provider,
+            default_condition=PartCondition(settings.parts_default_condition))
         bot = Bot(settings.telegram_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         dispatcher = Dispatcher(
             db=db, apipoint=apipoint, deal_engine=deal_engine,
             repair_catalog=repair_catalog, vision=vision, settings=settings,
-            parts_provider=parts_provider,
+            parts_orchestrator=parts_orchestrator,
         )
         dispatcher.update.outer_middleware(OwnerAccessMiddleware(settings.owner_telegram_ids))
         dispatcher.include_router(build_router())
@@ -75,8 +78,13 @@ async def main() -> None:
             logger.info("Бот успешно запущен: @%s (id=%s)", identity.username, identity.id)
             logger.info("APIpoint endpoint configured=%s; vision mode=%s", bool(settings.apipoint_token),
                         "enabled" if settings.yandex_ai_api_key else "degraded")
+            logger.info("APIpoint mode: %s", "TEST" if settings.test_mode else "LIVE")
+            logger.info("Parts search mode: %s", settings.parts_search_mode)
+            logger.info("Drom browser permission confirmed: %s", str(settings.drom_baza_permission_confirmed).lower())
             await dispatcher.start_polling(bot)
         finally:
+            close=getattr(parts_provider,"close",None)
+            if close: await close()
             await bot.session.close()
             await close_db()
 

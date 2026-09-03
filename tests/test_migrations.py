@@ -18,4 +18,4 @@ async def test_migration_preserves_old_rows(tmp_path):
         version=(await (await db.execute("PRAGMA user_version")).fetchone())[0]
     await engine.dispose()
     assert {"idempotency_key","condition_data","test_mode","parts_data"} <= columns
-    assert count==1 and version==2
+    assert count==1 and version==3

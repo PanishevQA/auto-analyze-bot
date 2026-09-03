@@ -14,8 +14,8 @@ from services.apipoint import APIpointError
 from services.deal_engine import DealEngine
 from services.repair_catalog import RepairCatalog
 from services.photos import temporary_analysis_directory
-from services.parts import PartsPriceProvider
-from schemas import PartSearchQuery, PartsStatus, DefectStatus
+from services.parts_orchestrator import PartsSearchOrchestrator
+from schemas import PartsStatus
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.messages import answer_long_html
 
@@ -24,7 +24,7 @@ router = Router()
 
 @router.callback_query(Questionnaire.confirmation, F.data.startswith("confirm:"))
 async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, vision,
-                  deal_engine: DealEngine, repair_catalog: RepairCatalog, parts_provider: PartsPriceProvider,
+                  deal_engine: DealEngine, repair_catalog: RepairCatalog, parts_orchestrator: PartsSearchOrchestrator,
                   settings) -> None:
     request_id = callback.data.split(":", 1)[1]
     data = await state.get_data()
@@ -60,15 +60,11 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
                 condition = vision.unavailable("Фотографии не удалось скачать или обработать")
             repairs = repair_catalog.estimate(condition.defects, vehicle.region)
             blocking = repair_catalog.has_blocking_risk(condition.defects)
-            part_quotes=[]; parts_total=0; parts_complete=True
-            for item in repairs.items:
-                if item.status is DefectStatus.CONFIRMED and item.requires_part:
-                    quote=await parts_provider.search(PartSearchQuery(vin=vehicle.vin, make=vehicle.make,
-                        model=vehicle.model, year=vehicle.year, generation=vehicle.generation,
-                        part_name=item.description, region=vehicle.region))
-                    part_quotes.append(quote)
-                    if quote.status is PartsStatus.READY: parts_total += quote.selected_price_rub or 0
-                    else: parts_complete=False
+            part_quotes=await parts_orchestrator.estimate(vehicle,condition.defects,repairs)
+            parts_total=sum(q.selected_price_rub or 0 for q in part_quotes if q.status is PartsStatus.READY)
+            parts_complete=all(q.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for q in part_quotes)
+            overall_parts_status=(PartsStatus.NOT_REQUIRED if not part_quotes else PartsStatus.READY
+                if parts_complete else next(q.status for q in part_quotes if q.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED}))
             deal = deal_engine.calculate(asking_price_rub=vehicle.asking_price_rub, market=market,
                 repairs=repairs, coverage=condition.coverage, has_blocking_risk=blocking,
                 parts_total_rub=parts_total, parts_complete=parts_complete)
@@ -78,6 +74,7 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
             vision_status = (AnalysisStatus.OK if condition.coverage is Coverage.FULL else
                              AnalysisStatus.LIMITED if condition.coverage is Coverage.LIMITED else AnalysisStatus.UNAVAILABLE)
             status = "COMPLETED" if market_status is AnalysisStatus.OK and vision_status is AnalysisStatus.OK else "PARTIAL"
+            if not parts_complete: status="PARTIAL"
             await db.complete_analysis(calculation_id, car_data=vehicle.model_dump(mode="json"),
                 market_data=market.model_dump(mode="json") if market else {}, repair_estimate=repairs.model_dump(mode="json"),
                 scores={"deal_result":deal.model_dump(mode="json")}, final_report=summary+"\n\n"+details,
@@ -86,13 +83,16 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
                 source_url=str(vehicle.source_url) if vehicle.source_url else None, source_mode=vehicle.source_mode.value,
                 market_status=market_status.value, vision_status=vision_status.value, model_uri=condition.model_uri,
                 prompt_version=condition.prompt_version, adapter_version=market.adapter_version if market else None,
-                catalog_version=repairs.catalog_version, formula_version=deal.formula_version)
-            await db.complete_analysis(calculation_id, test_mode=bool(market and market.is_test_data),
+                catalog_version=repairs.catalog_version, formula_version=deal.formula_version,
+                test_mode=bool(market and market.is_test_data),
                 parts_data=[q.model_dump(mode="json") for q in part_quotes],
-                parts_status=(PartsStatus.NOT_REQUIRED.value if not part_quotes else
-                    PartsStatus.READY.value if parts_complete else PartsStatus.UNAVAILABLE.value),
+                parts_status=overall_parts_status.value,
                 parts_quoted_at=next((q.fetched_at for q in part_quotes if q.fetched_at), None),
-                parts_provider=next((q.provider for q in part_quotes if q.provider), None))
+                parts_provider=next((q.provider for q in part_quotes if q.provider), None),
+                parts_search_mode=settings.parts_search_mode,parts_source=next((q.provider for q in part_quotes if q.provider),None),
+                parts_complete=parts_complete,parts_query_data=[q.query_data for q in part_quotes],
+                parts_permission_confirmed=settings.drom_baza_permission_confirmed,
+                parts_prompt_version=settings.yandex_parts_prompt_version)
             await state.clear(); await callback.message.answer(summary); await answer_long_html(callback.message, details)
     except Exception:
         await db.complete_analysis(calculation_id, status="FAILED")

@@ -51,6 +51,7 @@ class DealEngine:
                 verdict=DealVerdict.NO_RESULT,
                 reasons=["Рыночная оценка APIpoint или MANUAL отсутствует"],
                 formula_version=FORMULA_VERSION,
+                economics_complete=False,
             )
 
         quick = int((Decimal(market.market_price_rub) * self.settings.quick_sale_coefficient)
@@ -101,4 +102,5 @@ class DealEngine:
             excellent_buy_price_rub=excellent, required_discount_rub=discount,
             target_profit_rub=self.settings.target_profit_rub,
             verdict=verdict, reasons=reasons, formula_version=FORMULA_VERSION,
+            economics_complete=parts_complete,
         )

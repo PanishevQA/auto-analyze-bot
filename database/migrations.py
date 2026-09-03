@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-MIGRATION_VERSION = 2
+MIGRATION_VERSION = 3
 P1_COLUMNS = {
     "analysis_request_id": "VARCHAR(64)", "idempotency_key": "VARCHAR(128)",
     "status": "VARCHAR(20) NOT NULL DEFAULT 'COMPLETED'", "source_url": "TEXT",
@@ -15,6 +15,9 @@ P1_COLUMNS = {
     "updated_at": "TIMESTAMP",
     "test_mode": "BOOLEAN", "parts_data": "TEXT", "parts_status": "VARCHAR(20)",
     "parts_quoted_at": "TIMESTAMP", "parts_provider": "VARCHAR(100)",
+    "parts_search_mode": "VARCHAR(30)", "parts_source": "VARCHAR(100)",
+    "parts_complete": "BOOLEAN", "parts_query_data": "TEXT",
+    "parts_permission_confirmed": "BOOLEAN", "parts_prompt_version": "VARCHAR(100)",
 }
 
 async def migrate(engine: AsyncEngine) -> None:

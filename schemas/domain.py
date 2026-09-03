@@ -62,6 +62,14 @@ class DealVerdict(StrEnum):
 class PartsStatus(StrEnum):
     READY="READY"; NOT_REQUIRED="NOT_REQUIRED"; NO_MATCH="NO_MATCH"
     UNAVAILABLE="UNAVAILABLE"; STALE="STALE"; ERROR="ERROR"
+    BLOCKED="BLOCKED"; INSUFFICIENT_DATA="INSUFFICIENT_DATA"
+
+class PartsSearchMode(StrEnum):
+    DISABLED="DISABLED"; MANUAL_BROWSER="MANUAL_BROWSER"
+    AUTHORIZED_DROM_BROWSER="AUTHORIZED_DROM_BROWSER"
+
+class MatchStatus(StrEnum):
+    EXACT="EXACT"; LIKELY="LIKELY"; REJECTED="REJECTED"
 
 
 class VehicleSpec(StrictModel):
@@ -118,6 +126,7 @@ class PartSearchQuery(StrictModel):
     vin: str | None = Field(default=None, pattern=r"^[A-HJ-NPR-Z0-9]{17}$")
     make: str; model: str; year: int; generation: str | None = None
     part_name: str; oem_number: str | None = None; side: str | None = None
+    position: str | None = None
     quantity: int = Field(default=1, gt=0); region: str
     condition: PartCondition = PartCondition.NEW
 
@@ -127,6 +136,12 @@ class PartOffer(StrictModel):
     unit_price_rub: int = Field(gt=0); delivery_price_rub: int = Field(default=0, ge=0)
     quantity_available: int | None = Field(default=None, ge=0); delivery_days: int | None = Field(default=None, ge=0)
     in_stock: bool; offer_url: HttpUrl | None = None; fetched_at: datetime
+    old_price_rub: int | None = Field(default=None, gt=0)
+    location: str | None = None; delivery_text: str | None = None; seller: str | None = None
+    source: str = "DROM_BAZA_BROWSER"
+    match_status: MatchStatus = MatchStatus.REJECTED
+    match_confidence: Decimal = Field(default=Decimal("0"), ge=0, le=1)
+    match_reasons: list[str] = Field(default_factory=list)
 
 class PartPriceEstimate(StrictModel):
     status: PartsStatus; selected_price_rub: int | None = Field(default=None, ge=0)
@@ -134,6 +149,7 @@ class PartPriceEstimate(StrictModel):
     max_price_rub: int | None = Field(default=None, ge=0); offers_count: int = Field(default=0, ge=0)
     offers: list[PartOffer] = Field(default_factory=list); provider: str | None = None
     fetched_at: datetime | None = None; missing_parts: list[str] = Field(default_factory=list)
+    query_data: dict[str, Any] | None = None
 
 
 class PhotoReference(StrictModel):
@@ -199,6 +215,11 @@ class RepairItem(StrictModel):
     requires_manual_check: bool = False
     operation: str = "REPAIR"
     requires_part: bool = False
+    part_name: str | None = None
+    side: str | None = None
+    position: str | None = None
+    defect_id: str | None = None
+    quantity: int = Field(default=1, gt=0)
 
 
 class RepairEstimate(StrictModel):
@@ -230,3 +251,4 @@ class DealResult(StrictModel):
     verdict: DealVerdict
     reasons: list[SafeText]
     formula_version: str
+    economics_complete: bool = True

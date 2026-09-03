@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -38,10 +39,19 @@ class Settings:
     excellent_price_margin_rub: int = 10_000
     test_mode: bool = False
     test_apipoint_scenario: str = "success"
-    parts_provider: str | None = None
-    parts_api_url: str | None = None
-    parts_api_token: str | None = None
     parts_price_cache_ttl_hours: int = 12
+    parts_search_mode: str = "MANUAL_BROWSER"
+    drom_baza_permission_confirmed: bool = False
+    drom_baza_start_url: str = "https://baza.drom.ru/novosibirskaya-obl/sell_spare_parts/"
+    parts_browser_headless: bool = True
+    parts_browser_timeout_seconds: int = 30
+    parts_browser_max_offers: int = 20
+    parts_browser_max_pages: int = 1
+    parts_browser_concurrency: int = 1
+    parts_min_matched_offers: int = 3
+    parts_match_confidence: Decimal = Decimal("0.80")
+    parts_default_condition: str = "NEW"
+    yandex_parts_prompt_version: str = "parts-match-v1"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -73,10 +83,19 @@ class Settings:
             "excellent_price_margin_rub": _nonnegative_int("EXCELLENT_PRICE_MARGIN_RUB", 10_000),
             "test_mode": _strict_bool("TEST_MODE", False),
             "test_apipoint_scenario": os.getenv("TEST_APIPOINT_SCENARIO", "success").lower(),
-            "parts_provider": os.getenv("PARTS_PROVIDER") or None,
-            "parts_api_url": os.getenv("PARTS_API_URL") or None,
-            "parts_api_token": os.getenv("PARTS_API_TOKEN") or None,
             "parts_price_cache_ttl_hours": _positive_int("PARTS_PRICE_CACHE_TTL_HOURS", 12),
+            "parts_search_mode": os.getenv("PARTS_SEARCH_MODE", "MANUAL_BROWSER").upper(),
+            "drom_baza_permission_confirmed": _strict_bool("DROM_BAZA_PERMISSION_CONFIRMED", False),
+            "drom_baza_start_url": os.getenv("DROM_BAZA_START_URL", "https://baza.drom.ru/novosibirskaya-obl/sell_spare_parts/"),
+            "parts_browser_headless": _strict_bool("PARTS_BROWSER_HEADLESS", True),
+            "parts_browser_timeout_seconds": _positive_int("PARTS_BROWSER_TIMEOUT_SECONDS", 30),
+            "parts_browser_max_offers": _positive_int("PARTS_BROWSER_MAX_OFFERS", 20),
+            "parts_browser_max_pages": _positive_int("PARTS_BROWSER_MAX_PAGES", 1),
+            "parts_browser_concurrency": _positive_int("PARTS_BROWSER_CONCURRENCY", 1),
+            "parts_min_matched_offers": _positive_int("PARTS_MIN_MATCHED_OFFERS", 3),
+            "parts_match_confidence": _decimal_between_zero_one("PARTS_MATCH_CONFIDENCE", "0.80"),
+            "parts_default_condition": os.getenv("PARTS_DEFAULT_CONDITION", "NEW").upper(),
+            "yandex_parts_prompt_version": os.getenv("YANDEX_PARTS_PROMPT_VERSION", "parts-match-v1"),
         }
         missing = [key for key in ("telegram_bot_token",) if not values[key]]
         if not values["owner_telegram_ids"]:
@@ -94,6 +113,17 @@ class Settings:
         scenarios = {"success", "avgcarprice_no_result", "fallback_to_carprices", "all_sources_unavailable"}
         if values["test_apipoint_scenario"] not in scenarios:
             raise RuntimeError("Неизвестный TEST_APIPOINT_SCENARIO")
+        if values["parts_search_mode"] not in {"DISABLED","MANUAL_BROWSER","AUTHORIZED_DROM_BROWSER"}:
+            raise RuntimeError("Неизвестный PARTS_SEARCH_MODE")
+        if values["parts_search_mode"] == "AUTHORIZED_DROM_BROWSER" and not values["drom_baza_permission_confirmed"]:
+            raise RuntimeError("Автоматический поиск на Drom Базе нельзя включить без подтверждения разрешения правообладателя.")
+        parsed=urlsplit(values["drom_baza_start_url"])
+        if parsed.scheme != "https" or parsed.hostname != "baza.drom.ru" or parsed.username or parsed.password or parsed.port not in (None,443):
+            raise RuntimeError("DROM_BAZA_START_URL должен использовать https://baza.drom.ru")
+        if values["parts_browser_max_offers"] > 20 or values["parts_browser_max_pages"] > 1 or values["parts_browser_concurrency"] > 1:
+            raise RuntimeError("Лимиты Drom browser не могут превышать 20 предложений, 1 страницу и concurrency=1")
+        if values["parts_default_condition"] not in {"NEW","USED"}:
+            raise RuntimeError("PARTS_DEFAULT_CONDITION должен быть NEW или USED")
         return cls(**values)
 
 
