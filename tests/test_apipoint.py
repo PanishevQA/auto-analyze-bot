@@ -1,73 +1,60 @@
 from decimal import Decimal
-
+import json
 import httpx
 import pytest
+from schemas import MarketConfidence, MarketSource, VehicleSpec
+from services.apipoint import APIpointClient, MarketUnavailableError
 
-from schemas import MarketSource, VehicleSpec
-from services.apipoint import (APIpointClient, EndpointAdapter, InvalidMarketResponse,
-                               MarketUnavailableError, NotConfiguredError)
+def vehicle(): return VehicleSpec(make="Lada", model="Granta", year=2012, generation="I",
+    horsepower=87, transmission="MANUAL", asking_price_rub=300000, region="Новосибирская область")
 
-
-def vehicle() -> VehicleSpec:
-    return VehicleSpec(make="Toyota", model="Camry", year=2018, mileage_km=100_000,
-                       asking_price_rub=2_000_000, region="Москва",
-                       engine_volume_l=Decimal("2.5"), transmission="AT")
-
-
-def adapter(alias: str, source: MarketSource, url: str, path: str = "data.price") -> EndpointAdapter:
-    return EndpointAdapter(alias, source, url, path,
-                           {"make": "brand", "model": "model", "year": "year"})
-
+def avg_payload(error=False):
+    return {"status": True, "price": "1.5", "balance": "20.2", "result": {"avgcarprice": {
+        "error": error, "error_msg": "bad" if error else None, "result": {"average": 500000,
+        "minimalAverage": 450000, "offers_count": 8,
+        "offers": [{"price": 490000, "distance": 12, "url": "https://auto.drom.ru/1"}]}}}}
 
 @pytest.mark.asyncio
-async def test_avgcarprice_success_and_cache():
-    calls = 0
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        assert request.url.params["brand"] == "toyota"
-        return httpx.Response(200, json={"data": {"price": 2_500_000}})
+async def test_official_post_contract_nested_price_and_cache():
+    calls=[]
+    def handler(request):
+        calls.append(request); body=json.loads(request.content)
+        assert request.method == "POST" and str(request.url)=="https://apipoint.ru/api/call"
+        assert request.headers["Authorization"] == "Bearer token"
+        assert body["sources"] == "avgcarprice" and None not in body.values()
+        return httpx.Response(200,json=avg_payload())
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        service = APIpointClient(client, [adapter("Avgcarprice", MarketSource.APIPOINT_AVGCARPRICE,
-                                                  "https://api.test/avg")])
-        first = await service.estimate(vehicle())
-        second = await service.estimate(vehicle())
-    assert first.source is MarketSource.APIPOINT_AVGCARPRICE
-    assert second.market_price_rub == 2_500_000
-    assert calls == 1
-
+        service=APIpointClient(client,api_url="https://apipoint.ru/api/call",token="token")
+        result=await service.estimate(vehicle()); await service.estimate(vehicle())
+    assert len(calls)==1 and result.market_price_rub==500000
+    assert result.market_price_rub not in {1,20}
+    assert result.minimal_average_rub==450000 and result.offers_count==8
+    assert result.offers[0].distance==12 and result.request_cost_rub==Decimal("1.5")
+    assert result.confidence is MarketConfidence.HIGH
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["timeout", "500"])
-async def test_avg_failure_falls_back_to_carprices(failure: str):
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/avg":
-            if failure == "timeout":
-                raise httpx.ReadTimeout("timeout", request=request)
-            return httpx.Response(500, request=request)
-        return httpx.Response(200, json={"result": {"amount": 2_400_000}})
-    adapters = [
-        adapter("Avgcarprice", MarketSource.APIPOINT_AVGCARPRICE, "https://api.test/avg"),
-        adapter("Carprices", MarketSource.APIPOINT_CARPRICES, "https://api.test/fallback", "result.amount"),
-    ]
+@pytest.mark.parametrize("mode", ["error","missing","broken","500","429"])
+async def test_avg_failures_sequentially_fallback(mode):
+    aliases=[]
+    def handler(request):
+        body=json.loads(request.content); aliases.append(body["sources"])
+        if body["sources"]=="carprices":
+            return httpx.Response(200,json={"status":True,"result":{"carprices":{"error":False,"result":{"avg_price":470000}}}})
+        if mode=="error": return httpx.Response(200,json=avg_payload(True))
+        if mode=="missing": return httpx.Response(200,json={"status":True,"result":{"avgcarprice":{"error":False,"result":{}}}})
+        if mode=="broken": return httpx.Response(200,content=b"{")
+        return httpx.Response(int(mode))
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await APIpointClient(client, adapters).estimate(vehicle())
-    assert result.source is MarketSource.APIPOINT_CARPRICES
-    assert result.is_fallback is True
-
-
-@pytest.mark.parametrize("value", [None, 0, -1, 1_000_000_001])
-def test_invalid_prices_are_rejected(value):
-    endpoint = adapter("Avgcarprice", MarketSource.APIPOINT_AVGCARPRICE, "https://api.test")
-    with pytest.raises(InvalidMarketResponse):
-        endpoint.normalize({"data": {"price": value}})
-
+        result=await APIpointClient(client,api_url="https://apipoint.ru/api/call",token="t").estimate(vehicle())
+    assert aliases[-1]=="carprices" and result.source is MarketSource.APIPOINT_CARPRICES
+    assert result.is_fallback and result.confidence is MarketConfidence.LIMITED
+    assert aliases.count("avgcarprice") == (2 if mode in {"500","429"} else 1)
 
 @pytest.mark.asyncio
-async def test_not_configured_and_both_unavailable():
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(503))) as client:
-        with pytest.raises(NotConfiguredError):
-            await APIpointClient(client, []).estimate(vehicle())
+async def test_normal_4xx_no_retry_and_both_fail():
+    calls=[]
+    def handler(request): calls.append(json.loads(request.content)["sources"]); return httpx.Response(401)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(MarketUnavailableError):
-            await APIpointClient(client, [adapter("avg", MarketSource.APIPOINT_AVGCARPRICE,
-                                                   "https://api.test")]).estimate(vehicle())
+            await APIpointClient(client,api_url="https://apipoint.ru/api/call",token="bad").estimate(vehicle())
+    assert calls == ["avgcarprice", "carprices"]

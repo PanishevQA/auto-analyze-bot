@@ -10,10 +10,10 @@ from config import Settings
 from database.models import close_db, init_db
 from database.queries import Database
 from handlers import build_router
-from schemas import MarketSource
-from services.apipoint import APIpointClient, EndpointAdapter
+from services.apipoint import APIpointClient
 from services.deal_engine import DealEngine, DealSettings
 from services.repair_catalog import RepairCatalog
+from services.yandex_vision import YandexVisionClient
 from utils.access import OwnerAccessMiddleware
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,6 @@ async def main() -> None:
         write=settings.apipoint_read_timeout,
         pool=settings.apipoint_connect_timeout,
     )
-    adapters = build_apipoint_adapters(settings)
     repair_catalog = await RepairCatalog.load()
     deal_engine = DealEngine(DealSettings(
         quick_sale_coefficient=settings.quick_sale_coefficient,
@@ -44,41 +43,35 @@ async def main() -> None:
     ))
     async with httpx.AsyncClient(timeout=timeout) as client:
         apipoint = APIpointClient(
-            client, adapters, auth_header=settings.apipoint_auth_header,
-            auth_value=settings.apipoint_auth_value,
+            client, api_url=settings.apipoint_api_url, token=settings.apipoint_token,
             cache_ttl_seconds=settings.apipoint_cache_ttl_seconds,
+            high_confidence_offers=settings.apipoint_high_confidence_offers,
+            limited_confidence_offers=settings.apipoint_limited_confidence_offers,
         )
+        vision = YandexVisionClient(client, endpoint=settings.yandex_ai_endpoint,
+            api_key=settings.yandex_ai_api_key, model_uri=settings.yandex_vision_model_uri,
+            prompt_version=settings.yandex_vision_prompt_version,
+            defect_codes=list(repair_catalog.items))
+        vision.timeout = httpx.Timeout(connect=settings.yandex_vision_connect_timeout,
+            read=settings.yandex_vision_read_timeout, write=settings.yandex_vision_read_timeout,
+            pool=settings.yandex_vision_connect_timeout)
+        vision.max_retries = settings.yandex_vision_max_retries
         bot = Bot(settings.telegram_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         dispatcher = Dispatcher(
             db=db, apipoint=apipoint, deal_engine=deal_engine,
-            repair_catalog=repair_catalog,
+            repair_catalog=repair_catalog, vision=vision, settings=settings,
         )
         dispatcher.update.outer_middleware(OwnerAccessMiddleware(settings.owner_telegram_ids))
         dispatcher.include_router(build_router())
         try:
             identity = await bot.get_me()
             logger.info("Бот успешно запущен: @%s (id=%s)", identity.username, identity.id)
-            logger.info("APIpoint adapters: %s", [adapter.alias for adapter in adapters] or ["not-configured"])
+            logger.info("APIpoint endpoint configured=%s; vision mode=%s", bool(settings.apipoint_token),
+                        "enabled" if settings.yandex_ai_api_key else "degraded")
             await dispatcher.start_polling(bot)
         finally:
             await bot.session.close()
             await close_db()
-
-
-def build_apipoint_adapters(settings: Settings) -> list[EndpointAdapter]:
-    adapters = []
-    configurations = (
-        ("Avgcarprice", MarketSource.APIPOINT_AVGCARPRICE,
-         settings.apipoint_avgcarprice_url, settings.apipoint_avgcarprice_price_path,
-         settings.apipoint_avgcarprice_param_map),
-        ("Carprices", MarketSource.APIPOINT_CARPRICES,
-         settings.apipoint_carprices_url, settings.apipoint_carprices_price_path,
-         settings.apipoint_carprices_param_map),
-    )
-    for alias, source, url, price_path, parameter_map in configurations:
-        if url and price_path and parameter_map:
-            adapters.append(EndpointAdapter(alias, source, url, price_path, parameter_map))
-    return adapters
 
 
 if __name__ == "__main__":

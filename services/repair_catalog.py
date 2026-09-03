@@ -48,6 +48,11 @@ class RepairCatalog:
             catalog_version=self.version,
         )
 
+    def has_blocking_risk(self, defects: list[VisibleDefect]) -> bool:
+        return any(defect.status is DefectStatus.CONFIRMED
+                   and bool(self.items.get(defect.code, {}).get("blocking_risk", False))
+                   for defect in defects)
+
     @staticmethod
     def _money(value: int, coefficient: Decimal) -> int:
         return int((Decimal(value) * coefficient).quantize(Decimal("1"), rounding=ROUND_HALF_UP))

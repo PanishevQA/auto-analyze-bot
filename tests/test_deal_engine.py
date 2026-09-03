@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from schemas import (Coverage, DealVerdict, DefectStatus, MarketEstimate, MarketSource,
+from schemas import (Coverage, DealVerdict, DefectStatus, MarketConfidence, MarketEstimate, MarketSource,
                      RepairEstimate, RepairItem)
 from services.deal_engine import DealEngine, DealSettings
 
@@ -13,7 +13,7 @@ def engine() -> DealEngine:
 def market(price: int = 1_000_000) -> MarketEstimate:
     return MarketEstimate(source=MarketSource.APIPOINT_AVGCARPRICE, endpoint_alias="avg",
                           market_price_rub=price, received_at=datetime.now(timezone.utc),
-                          adapter_version="v1")
+                          adapter_version="v1", confidence=MarketConfidence.HIGH)
 
 
 def repairs(*, likely: int = 20_000, potential: int = 0) -> RepairEstimate:
@@ -61,4 +61,3 @@ def test_large_money_and_blocking_risk():
                                 has_blocking_risk=True)
     assert result.total_investment_rub == 101_015_000
     assert result.verdict is DealVerdict.PASS
-

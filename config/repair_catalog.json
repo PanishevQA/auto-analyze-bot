@@ -11,7 +11,7 @@
   "items": {
     "rust_minor": {"min_rub": 3000, "likely_rub": 6000, "max_rub": 12000, "description": "Локальная обработка поверхностной коррозии", "requires_manual_check": true},
     "rust_medium": {"min_rub": 12000, "likely_rub": 25000, "max_rub": 50000, "description": "Ремонт коррозии элемента", "requires_manual_check": true},
-    "rust_severe": {"min_rub": 30000, "likely_rub": 60000, "max_rub": 120000, "description": "Сложный кузовной ремонт коррозии", "requires_manual_check": true},
+    "rust_severe": {"min_rub": 30000, "likely_rub": 60000, "max_rub": 120000, "description": "Сложный кузовной ремонт коррозии", "requires_manual_check": true, "blocking_risk": true},
     "scratch_minor": {"min_rub": 1500, "likely_rub": 3000, "max_rub": 6000, "description": "Полировка неглубокой царапины", "requires_manual_check": false},
     "scratch_deep": {"min_rub": 7000, "likely_rub": 12000, "max_rub": 20000, "description": "Локальная окраска глубокой царапины", "requires_manual_check": false},
     "dent_minor": {"min_rub": 3000, "likely_rub": 6000, "max_rub": 10000, "description": "Удаление небольшой вмятины", "requires_manual_check": false},

@@ -8,10 +8,11 @@ def money(value: int) -> str:
 
 def format_summary(data: dict[str, Any]) -> str:
     return (
-        f"<b>Проверьте данные</b>\n\n🚗 {html.escape(data['car_model'])}\n"
-        f"📅 {data['year']} · 🛣 {money(data['mileage'])} км\n"
-        f"⚙️ {html.escape(data['engine'])}\n💰 {money(data['price'])} ₽\n"
-        f"📄 <b>Описание объявления:</b> {html.escape(data['listing_description'])}\n"
-        f"📷 <b>Повреждения на фото:</b> {html.escape(data['photo_damage'])}\n"
-        f"🛠 <b>Дополнительные данные:</b> {html.escape(data['user_issues'])}"
+        f"<b>Проверьте данные</b>\n\n🚗 {html.escape(str(data['make']))} {html.escape(str(data['model']))}\n"
+        f"📅 {data['year']} · 🛣 {money(int(data['mileage_km']))} км\n"
+        f"Поколение: {html.escape(str(data.get('generation') or 'не указано'))}\n"
+        f"Двигатель: {html.escape(str(data.get('engine_volume_l') or 'не указан'))}; "
+        f"{html.escape(str(data.get('fuel_type') or 'UNKNOWN'))}; {html.escape(str(data.get('transmission') or 'UNKNOWN'))}\n"
+        f"💰 {money(int(data['asking_price_rub']))} ₽ · 📷 {len(data.get('photos', []))} фото\n"
+        f"📄 {html.escape(str(data.get('seller_description') or 'Описание не указано'))}"
     )

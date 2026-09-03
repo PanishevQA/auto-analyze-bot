@@ -1,7 +1,8 @@
 import json
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from database.models import Calculation, User, async_session
@@ -40,11 +41,13 @@ class Database:
     async def save_calculation(
         self, telegram_id: int, *, car_data: dict[str, Any], market_data: dict[str, Any],
         repair_estimate: dict[str, Any], scores: dict[str, Any], final_report: str,
+        metadata: dict[str, Any] | None = None,
     ) -> int:
         async with self.session_factory() as session:
             user_id = await session.scalar(select(User.id).where(User.telegram_id == telegram_id))
             if user_id is None:
                 raise RuntimeError("Пользователь не найден")
+            meta = metadata or {}
             calculation = Calculation(
                 user_id=user_id,
                 car_data=json.dumps(car_data, ensure_ascii=False),
@@ -52,6 +55,16 @@ class Database:
                 repair_estimate=json.dumps(repair_estimate, ensure_ascii=False),
                 scores=json.dumps(scores, ensure_ascii=False),
                 final_report=final_report,
+                analysis_request_id=meta.get("analysis_request_id"), idempotency_key=meta.get("idempotency_key"),
+                status=meta.get("status", "COMPLETED"), source_url=meta.get("source_url"),
+                source_mode=meta.get("source_mode", "MANUAL"),
+                photos_metadata=json.dumps(meta.get("photos_metadata", []), ensure_ascii=False),
+                condition_data=json.dumps(meta.get("condition_data", {}), ensure_ascii=False),
+                market_status=meta.get("market_status", "UNAVAILABLE"),
+                vision_status=meta.get("vision_status", "UNAVAILABLE"), model_uri=meta.get("model_uri"),
+                prompt_version=meta.get("prompt_version"), adapter_version=meta.get("adapter_version"),
+                catalog_version=meta.get("catalog_version"), formula_version=meta.get("formula_version"),
+                parent_calculation_id=meta.get("parent_calculation_id"),
             )
             session.add(calculation)
             await session.flush()
@@ -59,6 +72,41 @@ class Database:
             await self._cleanup_old_calculations(session, user_id)
             await session.commit()
             return calculation_id
+
+    async def get_by_idempotency_key(self, key: str, telegram_id: int) -> dict[str, Any] | None:
+        async with self.session_factory() as session:
+            record = await session.scalar(select(Calculation).join(User).where(
+                Calculation.idempotency_key == key, User.telegram_id == telegram_id))
+            return self._calculation_dict(record) if record else None
+
+    async def reserve_analysis(self, telegram_id: int, key: str, request_id: str,
+                               car_data: dict[str, Any]) -> tuple[int, bool]:
+        async with self.session_factory() as session:
+            user_id = await session.scalar(select(User.id).where(User.telegram_id == telegram_id))
+            if user_id is None: raise RuntimeError("Пользователь не найден")
+            existing = await session.scalar(select(Calculation).where(Calculation.idempotency_key == key))
+            if existing: return existing.id, False
+            record = Calculation(user_id=user_id, car_data=json.dumps(car_data, ensure_ascii=False),
+                market_data="{}", repair_estimate="{}", scores="{}", final_report="",
+                analysis_request_id=request_id, idempotency_key=key, status="PROCESSING")
+            session.add(record)
+            try: await session.commit()
+            except IntegrityError:
+                await session.rollback(); existing = await session.scalar(select(Calculation).where(Calculation.idempotency_key == key))
+                return existing.id, False
+            return record.id, True
+
+    async def complete_analysis(self, calculation_id: int, **values: Any) -> None:
+        serialized = {key: json.dumps(value, ensure_ascii=False) for key, value in values.items()
+                      if key in {"car_data", "market_data", "repair_estimate", "scores",
+                                 "photos_metadata", "condition_data"}}
+        serialized.update({key: value for key, value in values.items() if key not in serialized})
+        async with self.session_factory() as session:
+            await session.execute(update(Calculation).where(Calculation.id == calculation_id).values(**serialized))
+            user_id = await session.scalar(select(Calculation.user_id).where(Calculation.id == calculation_id))
+            if user_id is not None:
+                await self._cleanup_old_calculations(session, user_id)
+            await session.commit()
 
     async def cleanup_old_calculations(self, user_db_id: int) -> None:
         async with self.session_factory() as session:
@@ -103,7 +151,10 @@ class Database:
         return {"id": record.id, "car_model": car_model,
                 "year": car.get("year", "—"),
                 "mileage": car.get("mileage", car.get("mileage_km", 0)) or 0,
-                "created_at": record.created_at}
+                "created_at": record.created_at, "status": record.status,
+                "condition_data": json.loads(record.condition_data or "{}"),
+                "photos_metadata": json.loads(record.photos_metadata or "[]"),
+                "parent_calculation_id": record.parent_calculation_id}
 
     @staticmethod
     def _calculation_dict(record: Calculation) -> dict[str, Any]:

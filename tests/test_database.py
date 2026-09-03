@@ -56,3 +56,11 @@ async def test_json_roundtrip_and_user_separation(database: Database):
     assert details["car_data"]["car_model"] == "Car 1"
     assert len(await database.get_user_calculations_list(100)) == 1
     assert len(await database.get_user_calculations_list(200)) == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotency_reservation_is_single_flight(database: Database):
+    await database.upsert_user(100)
+    first_id, first_created = await database.reserve_analysis(100, "key", "request", {"make": "Lada"})
+    second_id, second_created = await database.reserve_analysis(100, "key", "request", {"make": "Lada"})
+    assert first_created is True and second_created is False and first_id == second_id

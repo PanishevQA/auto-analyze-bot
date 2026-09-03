@@ -33,7 +33,24 @@ class Calculation(Base):
     repair_estimate: Mapped[str] = mapped_column(Text, nullable=False)
     scores: Mapped[str] = mapped_column(Text, nullable=False)
     final_report: Mapped[str] = mapped_column(Text, nullable=False)
+    analysis_request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="COMPLETED")
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="MANUAL")
+    photos_metadata: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    condition_data: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    market_status: Mapped[str] = mapped_column(String(20), nullable=False, default="UNAVAILABLE")
+    vision_status: Mapped[str] = mapped_column(String(20), nullable=False, default="UNAVAILABLE")
+    model_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    adapter_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    catalog_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    formula_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    parent_calculation_id: Mapped[int | None] = mapped_column(ForeignKey("calculations.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(),
+                                                  onupdate=func.current_timestamp())
     user: Mapped[User] = relationship(back_populates="calculations")
 
 
@@ -46,6 +63,8 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 async def init_db() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+    from database.migrations import migrate
+    await migrate(engine)
 
 
 async def close_db() -> None:

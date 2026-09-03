@@ -24,6 +24,12 @@ class MarketSource(StrEnum):
     MANUAL = "MANUAL"
 
 
+class MarketConfidence(StrEnum):
+    HIGH = "HIGH"
+    LIMITED = "LIMITED"
+    LOW = "LOW"
+
+
 class DefectSeverity(StrEnum):
     MINOR = "MINOR"
     MEDIUM = "MEDIUM"
@@ -73,6 +79,12 @@ class VehicleSpec(StrictModel):
     seller_description: str | None = Field(default=None, max_length=10_000)
 
 
+class MarketOffer(StrictModel):
+    price_rub: int = Field(gt=0, le=1_000_000_000)
+    distance: int | None = Field(default=None, ge=0)
+    url: HttpUrl | None = None
+
+
 class MarketEstimate(StrictModel):
     source: MarketSource
     endpoint_alias: str = Field(min_length=1, max_length=100)
@@ -81,6 +93,12 @@ class MarketEstimate(StrictModel):
     raw_payload: dict[str, Any] | None = None
     adapter_version: str = Field(min_length=1, max_length=50)
     is_fallback: bool = False
+    minimal_average_rub: int | None = Field(default=None, gt=0, le=1_000_000_000)
+    offers_count: int | None = Field(default=None, ge=0)
+    offers: list[MarketOffer] = Field(default_factory=list, max_length=100)
+    request_cost_rub: Decimal | None = Field(default=None, ge=0)
+    balance_rub: Decimal | None = Field(default=None, ge=0)
+    confidence: MarketConfidence = MarketConfidence.LIMITED
 
 
 class PhotoReference(StrictModel):
@@ -89,6 +107,8 @@ class PhotoReference(StrictModel):
     mime_type: str
     size_bytes: int | None = Field(default=None, ge=0)
     local_temp_path: str | None = None
+    telegram_file_unique_id: str | None = None
+    media_group_id: str | None = None
 
     @field_validator("mime_type")
     @classmethod
@@ -129,8 +149,8 @@ class ConditionAssessment(StrictModel):
     defects: list[VisibleDefect] = Field(default_factory=list, max_length=100)
     limitations: list[SafeText] = Field(default_factory=list, max_length=30)
     inspection_checklist: list[SafeText] = Field(default_factory=list, max_length=30)
-    model_uri: str
-    prompt_version: str
+    model_uri: str = ""
+    prompt_version: str = ""
     raw_payload: dict[str, Any] | None = None
 
 
@@ -167,6 +187,7 @@ class DealResult(StrictModel):
     max_buy_price_rub: int = Field(ge=0)
     excellent_buy_price_rub: int = Field(ge=0)
     required_discount_rub: int = Field(ge=0)
+    target_profit_rub: int = Field(default=0, ge=0)
     verdict: DealVerdict
     reasons: list[SafeText]
     formula_version: str

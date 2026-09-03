@@ -1,5 +1,17 @@
 # Журнал изменений
 
+## P1 — Drom manual, фотографии и vision
+
+- APIpoint переведен на официальный единый POST `/api/call`, Bearer token и nested paths.
+- Добавлены offers, confidence, стоимость запроса и последовательный Carprices fallback.
+- Добавлены manual Drom URL validation без сетевых запросов и структурированная FSM-анкета.
+- Добавлены Telegram photo/document/media-group metadata, дедупликация, порядок и лимиты.
+- Добавлены Qwen vision client, строгая ConditionAssessment validation и один JSON repair.
+- Добавлены deterministic blocking risk, параллельная orchestration и частичные статусы.
+- Добавлены P1 SQLite migration, уникальная idempotency key и защита повторных платных вызовов.
+- Добавлен пересчет сохраненного анализа с новой ценой без APIpoint и vision.
+- Обновлен подробный отчет рынка, фотографий, вложений и экономики.
+
 ## P0 — достоверная экономика
 
 - Добавлены строгие Pydantic-модели автомобиля, рынка, фотографий, видимых дефектов,

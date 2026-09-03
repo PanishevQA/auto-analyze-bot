@@ -1,103 +1,76 @@
-# Auto Analyze Bot
+# Auto Analyze Bot — P1
 
-Личный асинхронный Telegram-бот для детерминированной оценки экономики покупки автомобиля
-под перепродажу. Текущая реализация соответствует этапу **P0 — достоверная экономика**.
+Личный асинхронный Telegram-бот для предварительной оценки автомобиля под перепродажу.
+Рынок получает только через APIpoint, видимое состояние — через Yandex AI Studio Qwen,
+стоимость ремонта — из локального каталога, а деньги и verdict рассчитывает `DealEngine`.
 
-## Что реализовано в P0
+## Безопасность и ограничения
 
-- aiogram 3, SQLite и async SQLAlchemy 2;
-- обязательный allowlist владельцев по Telegram ID;
-- доменные Pydantic-модели с запретом лишних полей;
-- APIpoint strategy: Avgcarprice → Carprices, один retry и TTL-кэш;
-- полностью конфигурируемые URL, параметры, авторизация и путь к цене APIpoint;
-- локальный версионируемый справочник видимых дефектов;
-- финансовые формулы на `Decimal` и verdict `BUY`, `WATCH`, `PASS`, `NO_RESULT`;
-- сохранение истории и ограничение пятью последними расчетами владельца.
+- Доступ разрешен только `OWNER_TELEGRAM_IDS`.
+- Drom работает исключительно в manual mode: ссылка валидируется и сохраняется, HTTP-запрос к Drom не выполняется.
+- Фото не заменяют осмотр; vision не оценивает агрегаты, документы, юридическую чистоту или скрытые дефекты.
+- LLM не определяет рынок, рублевый ремонт, прибыль, ROI, max buy или verdict.
+- Бинарные фото и временные пути не сохраняются; временный каталог удаляется в `finally`.
 
-LLM не формирует рынок, стоимость ремонта, прибыль, ROI, цену входа или verdict. Если APIpoint
-не настроен либо оба endpoint недоступны, результат — `NO_RESULT`; нулевая или придуманная
-рыночная цена не подставляется.
-
-## Ограничения текущего этапа
-
-Фотографии, vision-модель, Drom manual flow, идемпотентные платные callbacks и пересчет истории
-относятся к P1 и пока не подключены. Существующая анкета продолжает собирать базовые ручные
-данные. Официальный Drom API не реализован: контракт и письменное разрешение отсутствуют.
-
-## Установка (Windows PowerShell)
+## Установка (PowerShell)
 
 ```powershell
 python -m venv venv
 .\venv\Scripts\activate
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 copy .env.example .env
 notepad .env
+python main.py
 ```
 
-## Обязательная конфигурация
-
-Минимально заполните:
+## Обязательные настройки
 
 ```env
 TELEGRAM_BOT_TOKEN=
 OWNER_TELEGRAM_IDS=123456789
+APIPOINT_API_URL=https://apipoint.ru/api/call
+APIPOINT_TOKEN=
 ```
 
-Если `OWNER_TELEGRAM_IDS` пуст, приложение завершится с понятной ошибкой и не запустится
-публично. Несколько ID разделяются запятыми.
-
-### APIpoint
-
-Репозиторий не содержит подтвержденного контракта APIpoint, поэтому URL, имена параметров,
-авторизация и JSON-путь к цене намеренно не зашиты в код. Для каждого доступного endpoint
-нужно заполнить значения из документации вашего аккаунта:
+Без vision-настроек бот запускается в degraded mode: рынок и экономика работают, состояние
+по фото получает `UNAVAILABLE`, поэтому выгодная экономика приводит к WATCH, а не BUY.
 
 ```env
-APIPOINT_AVGCARPRICE_URL=
-APIPOINT_AVGCARPRICE_PRICE_PATH=
-APIPOINT_AVGCARPRICE_PARAM_MAP={"make":"...","model":"...","year":"..."}
-APIPOINT_CARPRICES_URL=
-APIPOINT_CARPRICES_PRICE_PATH=
-APIPOINT_CARPRICES_PARAM_MAP={"make":"...","model":"...","year":"..."}
-APIPOINT_AUTH_HEADER=
-APIPOINT_AUTH_VALUE=
+YANDEX_AI_ENDPOINT=
+YANDEX_AI_API_KEY=
+YANDEX_VISION_MODEL_URI=gpt://<folder_id>/qwen3.6-35b-a3b
 ```
 
-`*_PRICE_PATH` — путь к целому значению цены через точку, например `data.price`, только если
-это подтверждено реальным ответом. `*_PARAM_MAP` сопоставляет канонические внутренние поля
-с фактическими именами query-параметров APIpoint. Секреты не коммитьте.
+Остальные timeout, photo limit и финансовые значения перечислены в `.env.example`.
 
-## Финансовые настройки
+## Сценарий
 
-```env
-QUICK_SALE_COEFFICIENT=0.92
-FIXED_EXPENSES_RUB=5000
-RISK_RESERVE_RUB=10000
-TARGET_PROFIT_RUB=40000
-EXCELLENT_PRICE_MARGIN_RUB=10000
-```
+1. `/start`, выбор региона и «Проанализировать авто».
+2. Выбор Drom/manual; Drom-ссылка используется только как источник.
+3. Отдельный ввод марки, модели, года, поколения, пробега, цены, двигателя, топлива,
+   мощности, КПП, привода, кузова и описания.
+4. Загрузка до 20 Telegram Photo/документов и управление списком.
+5. Подтверждение платных запросов с idempotency key.
+6. Параллельный APIpoint и vision, затем RepairCatalog и DealEngine.
+7. Короткий и подробный отчет, сохранение в SQLite.
+8. `/history <ID>` → «Пересчитать с другой ценой» без APIpoint и vision.
 
-Формулы находятся только в `services/deal_engine.py`. В `total_investment`, break-even и max
-buy включены ремонт, фиксированные расходы и резерв риска. Отрицательный ROI сохраняет знак.
+## APIpoint
 
-## Запуск
+Клиент всегда выполняет последовательные POST на `APIPOINT_API_URL`:
 
-```powershell
-.\venv\Scripts\activate
-python main.py
-```
+- `sources=avgcarprice`, цена только из `result.avgcarprice.result.average`;
+- при ошибке — `sources=carprices`, цена только из `result.carprices.result.avg_price`.
 
-SQLite-файл `bot_database.db` создается автоматически и исключен из git.
+Верхние `price` и `balance` сохраняются как стоимость запроса и баланс, но никогда не
+используются как рынок. Timeout/429/5xx получают максимум один retry; обычный 4xx — без retry.
 
-## Команды
+## SQLite и миграция
 
-| Команда | Назначение |
-|---|---|
-| `/start` | Выбор региона и начало ручной анкеты. |
-| `/history` | До пяти последних расчетов владельца. |
-| `/history <ID>` | Детальный сохраненный отчет владельца. |
+`database/migrations.py` идемпотентно добавляет P1-колонки к старой таблице, не удаляя записи.
+Хранятся normalized JSON, статусы блоков, версии, metadata фото и parent calculation.
 
-## Тестирование
+## Проверка
 
 ```powershell
 python -m compileall -q .
@@ -105,12 +78,11 @@ pytest -q
 pytest --cov=. --cov-report=term-missing
 ```
 
-Тесты используют `httpx.MockTransport`; реальные платные запросы не выполняются.
-Файлы `tests/fixtures/apipoint_*.json` являются только тестовыми схемами, связанными с
-явно настроенными тестовыми adapters, и не заявляются как реальный контракт APIpoint.
+Все HTTP-тесты используют `httpx.MockTransport`; реальные платные запросы запрещены.
 
-## Следующий этап
+## Интеграционное ограничение Yandex
 
-Для P1 владельцу потребуются URI мультимодальной Qwen-модели и проверенные параметры Responses
-API. Для подключения APIpoint нужны обезличенные fixtures реальных ответов. Для официального
-Drom adapter дополнительно необходимы письменное разрешение и подтвержденный API-контракт.
+Payload Responses API изолирован в `YandexVisionClient.build_payload`. В среде разработки
+официальная страница документации была недоступна через сетевой proxy (403), поэтому перед
+первым платным запуском владелец должен сверить `input_image`/`json_schema` поля с актуальной
+документацией своего Yandex AI Studio аккаунта и при необходимости изменить только builder.

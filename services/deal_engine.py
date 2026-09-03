@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
-from schemas import Coverage, DealResult, DealVerdict, MarketEstimate, RepairEstimate
+from schemas import (Coverage, DealResult, DealVerdict, MarketConfidence,
+                     MarketEstimate, RepairEstimate)
 
 FORMULA_VERSION = "deal-engine-v1"
 
@@ -45,6 +46,7 @@ class DealEngine:
                 expected_profit_rub=0, roi_percent=Decimal("0"),
                 break_even_buy_price_rub=0, max_buy_price_rub=0,
                 excellent_buy_price_rub=0, required_discount_rub=0,
+                target_profit_rub=self.settings.target_profit_rub,
                 verdict=DealVerdict.NO_RESULT,
                 reasons=["Рыночная оценка APIpoint или MANUAL отсутствует"],
                 formula_version=FORMULA_VERSION,
@@ -72,7 +74,8 @@ class DealEngine:
         elif asking_price_rub > break_even or profit < 0:
             verdict = DealVerdict.PASS
             reasons.append(f"Цена продавца выше безубыточной цены {break_even} ₽")
-        elif asking_price_rub <= max_buy and coverage is Coverage.FULL and not possible:
+        elif (asking_price_rub <= max_buy and coverage is Coverage.FULL and not possible
+              and market.confidence is MarketConfidence.HIGH):
             verdict = DealVerdict.BUY
             reasons.append(f"Цена не превышает целевую максимальную цену {max_buy} ₽")
         else:
@@ -83,6 +86,8 @@ class DealEngine:
                 reasons.append("Фотографии дают ограниченную или недоступную оценку состояния")
             if possible:
                 reasons.append("Есть возможные дефекты, требующие очной проверки")
+            if market.confidence is not MarketConfidence.HIGH:
+                reasons.append(f"Уверенность рынка {market.confidence.value}: проверьте аналоги вручную")
 
         return DealResult(
             quick_sale_price_rub=quick, repair_likely_rub=repair,
@@ -91,5 +96,6 @@ class DealEngine:
             total_investment_rub=total, expected_profit_rub=profit, roi_percent=roi,
             break_even_buy_price_rub=break_even, max_buy_price_rub=max_buy,
             excellent_buy_price_rub=excellent, required_discount_rub=discount,
+            target_profit_rub=self.settings.target_profit_rub,
             verdict=verdict, reasons=reasons, formula_version=FORMULA_VERSION,
         )
