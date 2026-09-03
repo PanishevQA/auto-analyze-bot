@@ -48,6 +48,11 @@ class Calculation(Base):
     catalog_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     formula_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     parent_calculation_id: Mapped[int | None] = mapped_column(ForeignKey("calculations.id"), nullable=True)
+    test_mode: Mapped[bool | None] = mapped_column(nullable=True)
+    parts_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parts_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    parts_quoted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    parts_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(),
                                                   onupdate=func.current_timestamp())

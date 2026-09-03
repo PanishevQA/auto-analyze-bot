@@ -32,7 +32,8 @@ class DealEngine:
     def calculate(
         self, *, asking_price_rub: int, market: MarketEstimate | None,
         repairs: RepairEstimate, coverage: Coverage = Coverage.UNAVAILABLE,
-        has_blocking_risk: bool = False,
+        has_blocking_risk: bool = False, parts_total_rub: int = 0,
+        parts_complete: bool = True,
     ) -> DealResult:
         if asking_price_rub <= 0:
             raise ValueError("Цена продавца должна быть положительной")
@@ -54,7 +55,7 @@ class DealEngine:
 
         quick = int((Decimal(market.market_price_rub) * self.settings.quick_sale_coefficient)
                     .quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        repair = repairs.confirmed_likely_rub
+        repair = repairs.confirmed_likely_rub + parts_total_rub
         total = asking_price_rub + repair + self.settings.fixed_expenses_rub + self.settings.risk_reserve_rub
         profit = quick - total
         roi = (Decimal(profit) / Decimal(total) * Decimal("100")).quantize(
@@ -74,7 +75,7 @@ class DealEngine:
         elif asking_price_rub > break_even or profit < 0:
             verdict = DealVerdict.PASS
             reasons.append(f"Цена продавца выше безубыточной цены {break_even} ₽")
-        elif (asking_price_rub <= max_buy and coverage is Coverage.FULL and not possible
+        elif (asking_price_rub <= max_buy and coverage is Coverage.FULL and not possible and parts_complete
               and market.confidence is MarketConfidence.HIGH):
             verdict = DealVerdict.BUY
             reasons.append(f"Цена не превышает целевую максимальную цену {max_buy} ₽")
@@ -88,6 +89,8 @@ class DealEngine:
                 reasons.append("Есть возможные дефекты, требующие очной проверки")
             if market.confidence is not MarketConfidence.HIGH:
                 reasons.append(f"Уверенность рынка {market.confidence.value}: проверьте аналоги вручную")
+            if not parts_complete:
+                reasons.append("Актуальные цены необходимых запчастей не получены; BUY недоступен")
 
         return DealResult(
             quick_sale_price_rub=quick, repair_likely_rub=repair,

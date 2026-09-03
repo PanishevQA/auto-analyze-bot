@@ -17,6 +17,7 @@ def test_decimal_financial_settings(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test")
     monkeypatch.setenv("OWNER_TELEGRAM_IDS", "123")
     monkeypatch.setenv("QUICK_SALE_COEFFICIENT", "0.91")
+    monkeypatch.setenv("APIPOINT_TOKEN", "test")
     settings = Settings.from_env()
     assert settings.owner_telegram_ids == frozenset({123})
     assert settings.quick_sale_coefficient == Decimal("0.91")

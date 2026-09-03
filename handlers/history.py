@@ -7,7 +7,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram import F
 
-from schemas import ConditionAssessment, MarketEstimate, RepairEstimate, VehicleSpec
+from schemas import ConditionAssessment, MarketEstimate, RepairEstimate, VehicleSpec, PartPriceEstimate, PartsStatus
+from services.repair_catalog import RepairCatalog
 from services.deal_engine import DealEngine
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.validators import validate_price
@@ -73,7 +74,7 @@ async def recalc_begin(callback:CallbackQuery,state:FSMContext,db):
     await callback.message.answer("Введите новую цену покупки, ₽:"); await callback.answer()
 
 @router.message(Recalculation.waiting_price)
-async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngine):
+async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngine,repair_catalog:RepairCatalog):
     try: new_price=validate_price(message.text or "")
     except ValueError as error: await message.answer(f"❌ {error}"); return
     data=await state.get_data(); old=await db.get_calculation_by_id(data["parent_calculation_id"],message.from_user.id)
@@ -81,13 +82,23 @@ async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngin
         vehicle=VehicleSpec.model_validate(old["car_data"]).model_copy(update={"asking_price_rub":new_price})
         market=MarketEstimate.model_validate(old["market_data"]) if old["market_data"].get("source") else None
         repairs=RepairEstimate.model_validate(old["repair_estimate"])
-        condition=ConditionAssessment.model_validate(old.get("condition_data") or old["scores"].get("condition"))
+        condition=ConditionAssessment.model_validate(old["condition_data"])
+        parts=[PartPriceEstimate.model_validate(item) for item in (old.get("parts_data") or [])]
     except Exception:
-        await message.answer("❌ Старый расчёт не содержит данных P1 для пересчёта."); await state.clear(); return
-    deal=deal_engine.calculate(asking_price_rub=new_price,market=market,repairs=repairs,coverage=condition.coverage)
-    summary=format_deal_summary(vehicle,deal); details=format_deal_details(vehicle,market,condition,repairs,deal)
+        await message.answer("Этот расчёт создан в старой версии бота и не содержит данных о состоянии автомобиля. Выполните новый анализ."); await state.clear(); return
+    blocking=repair_catalog.has_blocking_risk(condition.defects)
+    parts_complete=all(item.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in parts)
+    parts_total=sum(item.selected_price_rub or 0 for item in parts if item.status is PartsStatus.READY)
+    deal=deal_engine.calculate(asking_price_rub=new_price,market=market,repairs=repairs,
+        coverage=condition.coverage,has_blocking_risk=blocking,parts_total_rub=parts_total,
+        parts_complete=parts_complete)
+    summary=format_deal_summary(vehicle,deal,market); details=format_deal_details(vehicle,market,condition,repairs,deal,parts)
     await db.save_calculation(message.from_user.id,car_data=vehicle.model_dump(mode="json"),
         market_data=market.model_dump(mode="json") if market else {},repair_estimate=repairs.model_dump(mode="json"),
         scores={"deal_result":deal.model_dump(mode="json")},final_report=summary+"\n\n"+details,
-        metadata={"parent_calculation_id":old["id"],"status":"COMPLETED","condition_data":condition.model_dump(mode="json")})
+        metadata={"parent_calculation_id":old["id"],"status":"COMPLETED","condition_data":condition.model_dump(mode="json"),
+            "parts_data":[p.model_dump(mode="json") for p in parts],"parts_status":old.get("parts_status"),
+            "parts_quoted_at":old.get("parts_quoted_at"),"parts_provider":old.get("parts_provider"),
+            "test_mode":old.get("test_mode"),"market_status":old.get("market_status"),
+            "vision_status":old.get("vision_status"),**old.get("versions",{})})
     await state.clear(); await message.answer(summary); await answer_long_html(message,details)

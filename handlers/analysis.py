@@ -14,6 +14,8 @@ from services.apipoint import APIpointError
 from services.deal_engine import DealEngine
 from services.repair_catalog import RepairCatalog
 from services.photos import temporary_analysis_directory
+from services.parts import PartsPriceProvider
+from schemas import PartSearchQuery, PartsStatus, DefectStatus
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.messages import answer_long_html
 
@@ -22,7 +24,8 @@ router = Router()
 
 @router.callback_query(Questionnaire.confirmation, F.data.startswith("confirm:"))
 async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, vision,
-                  deal_engine: DealEngine, repair_catalog: RepairCatalog, settings) -> None:
+                  deal_engine: DealEngine, repair_catalog: RepairCatalog, parts_provider: PartsPriceProvider,
+                  settings) -> None:
     request_id = callback.data.split(":", 1)[1]
     data = await state.get_data()
     if request_id != data.get("analysis_request_id"):
@@ -57,10 +60,20 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
                 condition = vision.unavailable("Фотографии не удалось скачать или обработать")
             repairs = repair_catalog.estimate(condition.defects, vehicle.region)
             blocking = repair_catalog.has_blocking_risk(condition.defects)
+            part_quotes=[]; parts_total=0; parts_complete=True
+            for item in repairs.items:
+                if item.status is DefectStatus.CONFIRMED and item.requires_part:
+                    quote=await parts_provider.search(PartSearchQuery(vin=vehicle.vin, make=vehicle.make,
+                        model=vehicle.model, year=vehicle.year, generation=vehicle.generation,
+                        part_name=item.description, region=vehicle.region))
+                    part_quotes.append(quote)
+                    if quote.status is PartsStatus.READY: parts_total += quote.selected_price_rub or 0
+                    else: parts_complete=False
             deal = deal_engine.calculate(asking_price_rub=vehicle.asking_price_rub, market=market,
-                repairs=repairs, coverage=condition.coverage, has_blocking_risk=blocking)
-            summary = format_deal_summary(vehicle, deal)
-            details = format_deal_details(vehicle, market, condition, repairs, deal)
+                repairs=repairs, coverage=condition.coverage, has_blocking_risk=blocking,
+                parts_total_rub=parts_total, parts_complete=parts_complete)
+            summary = format_deal_summary(vehicle, deal, market)
+            details = format_deal_details(vehicle, market, condition, repairs, deal, part_quotes)
             market_status = AnalysisStatus.OK if market else AnalysisStatus.UNAVAILABLE
             vision_status = (AnalysisStatus.OK if condition.coverage is Coverage.FULL else
                              AnalysisStatus.LIMITED if condition.coverage is Coverage.LIMITED else AnalysisStatus.UNAVAILABLE)
@@ -74,6 +87,12 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
                 market_status=market_status.value, vision_status=vision_status.value, model_uri=condition.model_uri,
                 prompt_version=condition.prompt_version, adapter_version=market.adapter_version if market else None,
                 catalog_version=repairs.catalog_version, formula_version=deal.formula_version)
+            await db.complete_analysis(calculation_id, test_mode=bool(market and market.is_test_data),
+                parts_data=[q.model_dump(mode="json") for q in part_quotes],
+                parts_status=(PartsStatus.NOT_REQUIRED.value if not part_quotes else
+                    PartsStatus.READY.value if parts_complete else PartsStatus.UNAVAILABLE.value),
+                parts_quoted_at=next((q.fetched_at for q in part_quotes if q.fetched_at), None),
+                parts_provider=next((q.provider for q in part_quotes if q.provider), None))
             await state.clear(); await callback.message.answer(summary); await answer_long_html(callback.message, details)
     except Exception:
         await db.complete_analysis(calculation_id, status="FAILED")
@@ -110,4 +129,5 @@ def vehicle_from_fsm(data: dict) -> VehicleSpec:
         mileage_km=int(data["mileage_km"]), asking_price_rub=int(data["asking_price_rub"]),
         region=data["region"], engine_volume_l=Decimal(data["engine_volume_l"]) if data.get("engine_volume_l") else None,
         fuel_type=data.get("fuel_type"), horsepower=data.get("horsepower"), transmission=data.get("transmission"),
-        drive=data.get("drive"), body_type=data.get("body_type"), seller_description=data.get("seller_description"))
+        drive=data.get("drive"), body_type=data.get("body_type"), seller_description=data.get("seller_description"),
+        vin=data.get("vin"))

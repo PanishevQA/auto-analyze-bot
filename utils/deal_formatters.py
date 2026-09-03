@@ -1,12 +1,13 @@
 import html
 
-from schemas import ConditionAssessment, DealResult, MarketEstimate, RepairEstimate, VehicleSpec
+from schemas import ConditionAssessment, DealResult, MarketEstimate, RepairEstimate, VehicleSpec, PartPriceEstimate, PartsStatus
 from utils.formatters import money
 
 
-def format_deal_summary(vehicle: VehicleSpec, deal: DealResult) -> str:
+def format_deal_summary(vehicle: VehicleSpec, deal: DealResult, market: MarketEstimate | None = None) -> str:
     risk = deal.reasons[0] if deal.reasons else "Требуется очная проверка"
-    return (
+    test_banner = "🧪 <b>ТЕСТОВЫЙ РЕЖИМ</b>\nРыночная стоимость имитирована. Запрос к APIpoint не выполнялся.\n\n" if market and market.is_test_data else ""
+    return test_banner + (
         f"<b>{deal.verdict.value}</b> — {html.escape(vehicle.make)} {html.escape(vehicle.model)}\n"
         f"Цена продавца: {money(vehicle.asking_price_rub)} ₽\n"
         f"Максимальная цена покупки: {money(deal.max_buy_price_rub)} ₽\n"
@@ -18,7 +19,9 @@ def format_deal_summary(vehicle: VehicleSpec, deal: DealResult) -> str:
 def format_deal_details(
     vehicle: VehicleSpec, market: MarketEstimate | None,
     condition: ConditionAssessment, repairs: RepairEstimate, deal: DealResult,
+    parts: list[PartPriceEstimate] | None = None,
 ) -> str:
+    parts = parts or []
     if market:
         market_lines = [
             f"Источник: {market.source.value}\nEndpoint: {html.escape(market.endpoint_alias)}\n"
@@ -54,6 +57,18 @@ def format_deal_details(
     if deal.required_discount_rub:
         bargaining.append(f"Для целевой экономики требуется скидка {money(deal.required_discount_rub)} ₽")
     arguments = "\n".join(f"• {html.escape(item)}" for item in bargaining) or "• Подтвержденных аргументов пока нет"
+    ready_parts=[part for part in parts if part.status is PartsStatus.READY]
+    missing=[name for part in parts if part.status is not PartsStatus.READY for name in part.missing_parts]
+    parts_total=sum(part.selected_price_rub or 0 for part in ready_parts)
+    parts_lines="\n".join(f"• {html.escape(part.offers[0].part_name if part.offers else 'Деталь')}: {money(part.selected_price_rub or 0)} ₽" for part in ready_parts) or "• Не требуются или цена не получена"
+    quote_meta=""
+    if ready_parts:
+        quoted=ready_parts[0]
+        quote_time=quoted.fetched_at.strftime("%d.%m.%Y %H:%M UTC") if quoted.fetched_at else "неизвестно"
+        quote_meta=(f"\nИсточник: {html.escape(quoted.provider or 'не указан')}"
+                    f"\nОбновлено: {quote_time}"
+                    f"\nПредложений: {sum(item.offers_count for item in ready_parts)}")
+    incomplete=("\n⚠️ Экономика рассчитана не полностью. Не оценено: " + ", ".join(map(html.escape,missing))) if missing else ""
     return f"""💹 <b>РЫНОК</b>
 {market_block}
 
@@ -68,6 +83,11 @@ def format_deal_details(
 {limitations}
 
 🔧 <b>ВЛОЖЕНИЯ</b>
+Работы: {money(repairs.labor_likely_rub)} ₽
+Запчасти: {money(parts_total)} ₽
+Расходные материалы: {money(repairs.consumables_likely_rub)} ₽
+Цены запчастей:
+{parts_lines}{quote_meta}{incomplete}
 Подтверждено: {money(repairs.confirmed_min_rub)} / {money(repairs.confirmed_likely_rub)} / {money(repairs.confirmed_max_rub)} ₽
 Потенциально: {money(repairs.potential_min_rub)} — {money(repairs.potential_max_rub)} ₽
 Потенциальные дефекты не включены в основной repair likely.

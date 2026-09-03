@@ -40,12 +40,15 @@ class RepairCatalog:
                 defect_code=defect.code, description=str(entry["description"]), status=defect.status,
                 min_rub=values[0], likely_rub=values[1], max_rub=values[2],
                 requires_manual_check=bool(entry.get("requires_manual_check", False)),
+                operation=str(entry.get("operation", "REPAIR")),
+                requires_part=bool(entry.get("requires_part", False)),
             ))
         return RepairEstimate(
             confirmed_min_rub=confirmed[0], confirmed_likely_rub=confirmed[1],
             confirmed_max_rub=confirmed[2], potential_min_rub=potential[0],
             potential_max_rub=potential[2], items=items, warnings=warnings,
             catalog_version=self.version,
+            labor_likely_rub=confirmed[1], consumables_likely_rub=0,
         )
 
     def has_blocking_risk(self, defects: list[VisibleDefect]) -> bool:

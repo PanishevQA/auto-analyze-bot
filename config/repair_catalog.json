@@ -20,10 +20,10 @@
     "paint_element": {"min_rub": 10000, "likely_rub": 16000, "max_rub": 25000, "description": "Окраска одного кузовного элемента", "requires_manual_check": false},
     "bumper_repair": {"min_rub": 5000, "likely_rub": 9000, "max_rub": 16000, "description": "Ремонт бампера", "requires_manual_check": false},
     "bumper_paint": {"min_rub": 9000, "likely_rub": 15000, "max_rub": 23000, "description": "Окраска бампера", "requires_manual_check": false},
-    "bumper_replace": {"min_rub": 18000, "likely_rub": 35000, "max_rub": 70000, "description": "Замена бампера", "requires_manual_check": true},
-    "headlight_damage": {"min_rub": 8000, "likely_rub": 20000, "max_rub": 60000, "description": "Ремонт или замена фары", "requires_manual_check": true},
-    "glass_damage": {"min_rub": 8000, "likely_rub": 18000, "max_rub": 40000, "description": "Замена поврежденного стекла", "requires_manual_check": true},
-    "tire_worn": {"min_rub": 16000, "likely_rub": 28000, "max_rub": 50000, "description": "Комплект шин", "requires_manual_check": false},
+    "bumper_replace": {"min_rub": 3000, "likely_rub": 5000, "max_rub": 8000, "description": "Работа по замене бампера; деталь оценивается поставщиком", "requires_manual_check": true, "operation": "REPLACE", "requires_part": true},
+    "headlight_damage": {"min_rub": 1500, "likely_rub": 2500, "max_rub": 4000, "description": "Работа по замене фары; деталь оценивается поставщиком", "requires_manual_check": true, "operation": "REPLACE", "requires_part": true},
+    "glass_damage": {"min_rub": 4000, "likely_rub": 7000, "max_rub": 12000, "description": "Работа по замене стекла; стекло оценивается поставщиком", "requires_manual_check": true, "operation": "REPLACE", "requires_part": true},
+    "tire_worn": {"min_rub": 2000, "likely_rub": 3000, "max_rub": 5000, "description": "Шиномонтаж; шины оцениваются поставщиком", "requires_manual_check": false, "operation": "REPLACE", "requires_part": true},
     "interior_wear": {"min_rub": 3000, "likely_rub": 8000, "max_rub": 20000, "description": "Локальное восстановление салона", "requires_manual_check": true},
     "interior_cleaning": {"min_rub": 4000, "likely_rub": 7000, "max_rub": 12000, "description": "Химчистка салона", "requires_manual_check": false}
   }

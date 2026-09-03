@@ -59,6 +59,10 @@ class DealVerdict(StrEnum):
     PASS = "PASS"
     NO_RESULT = "NO_RESULT"
 
+class PartsStatus(StrEnum):
+    READY="READY"; NOT_REQUIRED="NOT_REQUIRED"; NO_MATCH="NO_MATCH"
+    UNAVAILABLE="UNAVAILABLE"; STALE="STALE"; ERROR="ERROR"
+
 
 class VehicleSpec(StrictModel):
     source_url: HttpUrl | None = None
@@ -77,6 +81,12 @@ class VehicleSpec(StrictModel):
     drive: str | None = Field(default=None, max_length=50)
     body_type: str | None = Field(default=None, max_length=50)
     seller_description: str | None = Field(default=None, max_length=10_000)
+    vin: str | None = Field(default=None, pattern=r"^[A-HJ-NPR-Z0-9]{17}$")
+
+    @field_validator("vin", mode="before")
+    @classmethod
+    def normalize_vin(cls, value):
+        return value.strip().upper() if isinstance(value, str) and value.strip() else None
 
 
 class MarketOffer(StrictModel):
@@ -99,6 +109,31 @@ class MarketEstimate(StrictModel):
     request_cost_rub: Decimal | None = Field(default=None, ge=0)
     balance_rub: Decimal | None = Field(default=None, ge=0)
     confidence: MarketConfidence = MarketConfidence.LIMITED
+    is_test_data: bool = False
+
+class PartCondition(StrEnum):
+    NEW="NEW"; USED="USED"
+
+class PartSearchQuery(StrictModel):
+    vin: str | None = Field(default=None, pattern=r"^[A-HJ-NPR-Z0-9]{17}$")
+    make: str; model: str; year: int; generation: str | None = None
+    part_name: str; oem_number: str | None = None; side: str | None = None
+    quantity: int = Field(default=1, gt=0); region: str
+    condition: PartCondition = PartCondition.NEW
+
+class PartOffer(StrictModel):
+    provider: str; manufacturer: str | None = None; part_name: str
+    oem_number: str | None = None; condition: PartCondition
+    unit_price_rub: int = Field(gt=0); delivery_price_rub: int = Field(default=0, ge=0)
+    quantity_available: int | None = Field(default=None, ge=0); delivery_days: int | None = Field(default=None, ge=0)
+    in_stock: bool; offer_url: HttpUrl | None = None; fetched_at: datetime
+
+class PartPriceEstimate(StrictModel):
+    status: PartsStatus; selected_price_rub: int | None = Field(default=None, ge=0)
+    min_price_rub: int | None = Field(default=None, ge=0); median_price_rub: int | None = Field(default=None, ge=0)
+    max_price_rub: int | None = Field(default=None, ge=0); offers_count: int = Field(default=0, ge=0)
+    offers: list[PartOffer] = Field(default_factory=list); provider: str | None = None
+    fetched_at: datetime | None = None; missing_parts: list[str] = Field(default_factory=list)
 
 
 class PhotoReference(StrictModel):
@@ -162,6 +197,8 @@ class RepairItem(StrictModel):
     likely_rub: int = Field(ge=0)
     max_rub: int = Field(ge=0)
     requires_manual_check: bool = False
+    operation: str = "REPAIR"
+    requires_part: bool = False
 
 
 class RepairEstimate(StrictModel):
@@ -173,6 +210,8 @@ class RepairEstimate(StrictModel):
     items: list[RepairItem] = Field(default_factory=list)
     warnings: list[SafeText] = Field(default_factory=list)
     catalog_version: str
+    labor_likely_rub: int = Field(default=0, ge=0)
+    consumables_likely_rub: int = Field(default=0, ge=0)
 
 
 class DealResult(StrictModel):

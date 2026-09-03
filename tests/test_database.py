@@ -64,3 +64,26 @@ async def test_idempotency_reservation_is_single_flight(database: Database):
     first_id, first_created = await database.reserve_analysis(100, "key", "request", {"make": "Lada"})
     second_id, second_created = await database.reserve_analysis(100, "key", "request", {"make": "Lada"})
     assert first_created is True and second_created is False and first_id == second_id
+
+@pytest.mark.asyncio
+async def test_parts_condition_and_versions_roundtrip(database: Database):
+    await database.upsert_user(100)
+    parent=await _save(database,100,1)
+    calculation_id=await database.save_calculation(100,car_data={"make":"Ford"},market_data={},
+        repair_estimate={},scores={},final_report="x",metadata={"condition_data":{"coverage":"FULL"},
+        "parts_data":[{"status":"READY"}],"parts_status":"READY","parts_provider":"official-test",
+        "test_mode":True,"parent_calculation_id":parent,"formula_version":"v1"})
+    saved=await database.get_calculation_by_id(calculation_id,100)
+    assert saved["condition_data"]=={"coverage":"FULL"}
+    assert saved["parts_data"]==[{"status":"READY"}] and saved["test_mode"] is True
+    assert saved["parent_calculation_id"]==parent and saved["versions"]["formula_version"]=="v1"
+
+@pytest.mark.asyncio
+async def test_user_region_update_and_explicit_cleanup(database: Database):
+    await database.set_region(300,"Москва")
+    assert (await database.get_user(300)).region=="Москва"
+    await database.set_region(300,"Казань")
+    user=await database.get_user(300); assert user.region=="Казань"
+    for index in range(7): await _save(database,300,index)
+    await database.cleanup_old_calculations(user.id)
+    assert len(await database.get_user_calculations_list(300,99))==5

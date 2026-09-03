@@ -44,6 +44,11 @@ def test_watch_for_limited_coverage_or_possible_defect():
     assert limited.verdict is DealVerdict.WATCH
     assert possible.verdict is DealVerdict.WATCH
 
+    missing_parts = engine().calculate(asking_price_rub=800_000, market=market(),
+        repairs=repairs(), coverage=Coverage.FULL, parts_complete=False)
+    assert missing_parts.verdict is DealVerdict.WATCH
+    assert any("запчаст" in reason for reason in missing_parts.reasons)
+
 
 def test_pass_negative_roi_and_no_result():
     result = engine().calculate(asking_price_rub=950_000, market=market(), repairs=repairs(),

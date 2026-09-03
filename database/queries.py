@@ -65,6 +65,9 @@ class Database:
                 prompt_version=meta.get("prompt_version"), adapter_version=meta.get("adapter_version"),
                 catalog_version=meta.get("catalog_version"), formula_version=meta.get("formula_version"),
                 parent_calculation_id=meta.get("parent_calculation_id"),
+                test_mode=meta.get("test_mode"), parts_data=json.dumps(meta.get("parts_data"), ensure_ascii=False),
+                parts_status=meta.get("parts_status"), parts_quoted_at=meta.get("parts_quoted_at"),
+                parts_provider=meta.get("parts_provider"),
             )
             session.add(calculation)
             await session.flush()
@@ -99,7 +102,7 @@ class Database:
     async def complete_analysis(self, calculation_id: int, **values: Any) -> None:
         serialized = {key: json.dumps(value, ensure_ascii=False) for key, value in values.items()
                       if key in {"car_data", "market_data", "repair_estimate", "scores",
-                                 "photos_metadata", "condition_data"}}
+                                 "photos_metadata", "condition_data", "parts_data"}}
         serialized.update({key: value for key, value in values.items() if key not in serialized})
         async with self.session_factory() as session:
             await session.execute(update(Calculation).where(Calculation.id == calculation_id).values(**serialized))
@@ -158,8 +161,17 @@ class Database:
 
     @staticmethod
     def _calculation_dict(record: Calculation) -> dict[str, Any]:
-        return {"id": record.id, "car_data": json.loads(record.car_data),
+        return {"id": record.id, "user_id": record.user_id, "car_data": json.loads(record.car_data),
                 "market_data": json.loads(record.market_data),
                 "repair_estimate": json.loads(record.repair_estimate),
                 "scores": json.loads(record.scores), "final_report": record.final_report,
-                "created_at": record.created_at}
+                "condition_data": json.loads(record.condition_data or "{}"),
+                "parts_data": json.loads(record.parts_data) if record.parts_data else None,
+                "parts_status": record.parts_status, "parts_quoted_at": record.parts_quoted_at,
+                "parts_provider": record.parts_provider, "test_mode": record.test_mode,
+                "vision_status": record.vision_status, "market_status": record.market_status,
+                "versions": {"model_uri": record.model_uri, "prompt_version": record.prompt_version,
+                    "adapter_version": record.adapter_version, "catalog_version": record.catalog_version,
+                    "formula_version": record.formula_version},
+                "parent_calculation_id": record.parent_calculation_id,
+                "created_at": record.created_at, "updated_at": record.updated_at}

@@ -36,6 +36,12 @@ class Settings:
     risk_reserve_rub: int = 10_000
     target_profit_rub: int = 40_000
     excellent_price_margin_rub: int = 10_000
+    test_mode: bool = False
+    test_apipoint_scenario: str = "success"
+    parts_provider: str | None = None
+    parts_api_url: str | None = None
+    parts_api_token: str | None = None
+    parts_price_cache_ttl_hours: int = 12
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -65,6 +71,12 @@ class Settings:
             "risk_reserve_rub": _nonnegative_int("RISK_RESERVE_RUB", 10_000),
             "target_profit_rub": _nonnegative_int("TARGET_PROFIT_RUB", 40_000),
             "excellent_price_margin_rub": _nonnegative_int("EXCELLENT_PRICE_MARGIN_RUB", 10_000),
+            "test_mode": _strict_bool("TEST_MODE", False),
+            "test_apipoint_scenario": os.getenv("TEST_APIPOINT_SCENARIO", "success").lower(),
+            "parts_provider": os.getenv("PARTS_PROVIDER") or None,
+            "parts_api_url": os.getenv("PARTS_API_URL") or None,
+            "parts_api_token": os.getenv("PARTS_API_TOKEN") or None,
+            "parts_price_cache_ttl_hours": _positive_int("PARTS_PRICE_CACHE_TTL_HOURS", 12),
         }
         missing = [key for key in ("telegram_bot_token",) if not values[key]]
         if not values["owner_telegram_ids"]:
@@ -77,7 +89,19 @@ class Settings:
             raise RuntimeError("MIN_PHOTOS_FOR_VISION не может превышать MAX_PHOTOS_PER_ANALYSIS")
         if values["apipoint_limited_confidence_offers"] > values["apipoint_high_confidence_offers"]:
             raise RuntimeError("LIMITED confidence threshold не может превышать HIGH")
+        if not values["test_mode"] and not values["apipoint_token"]:
+            raise RuntimeError("APIPOINT_TOKEN обязателен при TEST_MODE=false")
+        scenarios = {"success", "avgcarprice_no_result", "fallback_to_carprices", "all_sources_unavailable"}
+        if values["test_apipoint_scenario"] not in scenarios:
+            raise RuntimeError("Неизвестный TEST_APIPOINT_SCENARIO")
         return cls(**values)
+
+
+def _strict_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, str(default)).strip().lower()
+    if raw == "true": return True
+    if raw == "false": return False
+    raise RuntimeError(f"{name} должен иметь значение true или false")
 
 
 def _parse_owner_ids(raw: str) -> frozenset[int]:
