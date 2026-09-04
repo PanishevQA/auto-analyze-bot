@@ -5,20 +5,24 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State,StatesGroup
 from aiogram.types import CallbackQuery,InlineKeyboardButton,InlineKeyboardMarkup,Message
 
-from schemas import (ConditionAssessment,MarketEstimate,PartOffer,PartSearchQuery,
-    PartsStatus,RepairEstimate,VehicleSpec)
+from schemas import (ConditionAssessment,MarketEstimate,PartOffer,PartPriceEstimate,
+    PartSearchQuery,PartsStatus,RepairEstimate,VehicleSpec)
 from services.manual_parts_provider import ManualBrowserPartsProvider,validate_drom_baza_url
 from services.parts_matcher import match_offer
 from services.photos import temporary_analysis_directory
 from utils.deal_formatters import format_deal_details,format_deal_summary
 from utils.messages import answer_long_html
+from utils.keyboards import main_menu
 
 router=Router()
 class ManualParts(StatesGroup): collecting=State(); confirming=State()
 
 def controls(): return InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="✅ Распознать",callback_data="manualparts:extract")],
-    [InlineKeyboardButton(text="Пропустить",callback_data="manualparts:skip")]])
+    [InlineKeyboardButton(text="⬅️ Назад",callback_data="manualparts:back")],
+    [InlineKeyboardButton(text="⏭ Пропустить",callback_data="manualparts:skip")],
+    [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel"),
+     InlineKeyboardButton(text="🏠 Главное меню",callback_data="nav:home")]])
 
 @router.callback_query(F.data.regexp(r"^manualparts:\d+$"))
 async def begin(callback:CallbackQuery,state:FSMContext,db,settings):
@@ -26,16 +30,20 @@ async def begin(callback:CallbackQuery,state:FSMContext,db,settings):
     if not calculation: await callback.answer("Расчёт не найден",show_alert=True); return
     queries=calculation.get("parts_query_data") or []
     if not queries: await callback.answer("Нет деталей для поиска",show_alert=True); return
-    prior=calculation.get("parts_data") or []; index=next((i for i,item in enumerate(prior) if item.get("status")!="READY"),0)
-    index=min(index,len(queries)-1)
+    prior=calculation.get("parts_data") or []
+    ready_ids={item.get("defect_id") for item in prior if item.get("status") in {"READY","NOT_REQUIRED"}}
+    index=next((i for i,item in enumerate(queries) if item.get("defect_id") not in ready_ids),0)
     await state.set_state(ManualParts.collecting); await state.update_data(manual_calc_id=calc_id,manual_screenshots=[],manual_query_index=index)
     query=queries[index]; url=validate_drom_baza_url(settings.drom_baza_start_url)
-    await callback.message.answer(f"🔎 <b>Требуется найти запчасть</b>\nПоисковая фраза: {query.get('query',query.get('part_name'))}\n"
+    await callback.message.answer(f"🔎 <b>Запчасть {index+1} из {len(queries)}</b>\n"
+        f"Необходимо найти: {query.get('part_name','деталь')}\nПоисковая фраза: {query.get('query',query.get('part_name'))}\n"
         "Откройте Drom Базу и отправьте 3–10 скриншотов видимых карточек. Данные будут показаны до включения в расчёт.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Открыть Drom Базу",url=url)],
             [InlineKeyboardButton(text="Отправить ссылки",callback_data="manualparts:links"),
              InlineKeyboardButton(text="Отправить скриншоты",callback_data="manualparts:screens")],
-            [InlineKeyboardButton(text="Пропустить",callback_data="manualparts:skip")]])); await callback.answer()
+            [InlineKeyboardButton(text="⏭ Пропустить",callback_data="manualparts:skip")],
+            [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel"),
+             InlineKeyboardButton(text="🏠 Главное меню",callback_data="nav:home")]])); await callback.answer()
 
 @router.callback_query(ManualParts.collecting,F.data.in_({"manualparts:links","manualparts:screens"}))
 async def choose_input(callback:CallbackQuery):
@@ -65,7 +73,8 @@ async def links(message:Message,state:FSMContext,db):
     await state.set_state(ManualParts.confirming)
     await message.answer("Проверьте данные:\n"+preview,reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить",callback_data="manualparts:confirm")],
-        [InlineKeyboardButton(text="Отмена",callback_data="manualparts:skip")]]))
+        [InlineKeyboardButton(text="⬅️ Назад",callback_data="manualparts:back")],
+        [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel"),InlineKeyboardButton(text="🏠 Главное меню",callback_data="nav:home")]]))
 
 @router.message(ManualParts.collecting,F.photo|F.document)
 async def screenshot(message:Message,state:FSMContext):
@@ -104,20 +113,27 @@ async def extract(callback:CallbackQuery,state:FSMContext,db,parts_agent,setting
     await state.set_state(ManualParts.confirming)
     await callback.message.answer("Проверьте распознанные данные:\n"+preview,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Подтвердить",callback_data="manualparts:confirm")],
-            [InlineKeyboardButton(text="Отмена",callback_data="manualparts:skip")]])); await callback.answer()
+            [InlineKeyboardButton(text="⬅️ Назад",callback_data="manualparts:back")],
+        [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel"),InlineKeyboardButton(text="🏠 Главное меню",callback_data="nav:home")]])); await callback.answer()
 
 @router.callback_query(ManualParts.confirming,F.data=="manualparts:confirm")
-async def confirm(callback:CallbackQuery,state:FSMContext,db,deal_engine,repair_catalog,settings):
+async def confirm(callback:CallbackQuery,state:FSMContext,db,deal_engine,repair_catalog,settings,parts_agent):
     data=await state.get_data(); old=await db.get_calculation_by_id(data["manual_calc_id"],callback.from_user.id)
-    vehicle=VehicleSpec.model_validate(old["car_data"]); market=MarketEstimate.model_validate(old["market_data"])
+    vehicle=VehicleSpec.model_validate(old["car_data"])
+    market_data=old.get("market_data") or {}
+    market=MarketEstimate.model_validate(market_data) if market_data.get("source") else None
     repairs=RepairEstimate.model_validate(old["repair_estimate"]); condition=ConditionAssessment.model_validate(old["condition_data"])
     query=PartSearchQuery.model_validate(data["manual_query"]); offers=[PartOffer.model_validate(x) for x in data["manual_offers"]]
+    matching={"matching_source":"RULES_FALLBACK","fallback_used":True,"input_offers":len(offers)}
+    try: offers,matching=await parts_agent.classify_offers(vehicle,query,offers)
+    except Exception: pass
     provider=ManualBrowserPartsProvider(settings.drom_baza_start_url,settings.parts_min_matched_offers)
-    quote=provider.normalize_submitted(query,offers)
+    quote=provider.normalize_submitted(query,offers).model_copy(update={"query_data":{**query.model_dump(mode="json",exclude={"vin"}),**matching}})
     previous=[PartPriceEstimate.model_validate(item) for item in (old.get("parts_data") or [])]
-    index=data.get("manual_query_index",0); quotes=list(previous)
-    if index<len(quotes): quotes[index]=quote
-    else: quotes.append(quote)
+    quotes=list(previous)
+    quote_index=next((i for i,item in enumerate(quotes) if item.defect_id==quote.defect_id),None)
+    if quote_index is None: quotes.append(quote)
+    else: quotes[quote_index]=quote
     complete=bool(quotes) and all(item.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in quotes)
     parts_total=sum(item.selected_price_rub or 0 for item in quotes if item.status is PartsStatus.READY)
     overall=PartsStatus.READY if complete else next((item.status for item in quotes if item.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED}),quote.status)
@@ -131,9 +147,14 @@ async def confirm(callback:CallbackQuery,state:FSMContext,db,deal_engine,repair_
         status="COMPLETED" if complete else "PARTIAL")
     await state.clear(); await callback.answer(); await callback.message.answer(summary); await answer_long_html(callback.message,details)
     if not complete:
-        await callback.message.answer("Остались неоценённые детали.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📷 Добавить объявления",callback_data=f"manualparts:{old['id']}")]]))
+        remaining=sum(item.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in quotes)
+        await callback.message.answer(f"Остались неоценённые детали: {remaining}.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➡️ Перейти к следующей детали",callback_data=f"manualparts:{old['id']}")]]))
 
 @router.callback_query(F.data=="manualparts:skip")
 async def skip(callback:CallbackQuery,state:FSMContext):
-    await state.clear(); await callback.answer(); await callback.message.answer("Оценка запчастей пропущена; экономика остаётся неполной.")
+    await state.clear(); await callback.answer(); await callback.message.answer("Оценка запчастей пропущена; экономика остаётся неполной.",reply_markup=main_menu())
+
+@router.callback_query(F.data=="manualparts:back")
+async def back(callback:CallbackQuery,state:FSMContext):
+    await state.clear(); await callback.answer(); await callback.message.answer("Возврат к отчёту.",reply_markup=main_menu())

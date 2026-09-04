@@ -14,6 +14,7 @@ from schemas import PhotoReference
 from utils.formatters import format_summary
 from utils.validators import validate_mileage, validate_price, validate_year
 from utils.keyboards import BACK,CANCEL,HOME,NEW_ANALYSIS,SKIP,main_menu,navigation
+from handlers.navigation import CONTROL_TEXTS
 
 router = Router()
 
@@ -24,17 +25,23 @@ class Questionnaire(StatesGroup):
     fuel_type = State(); horsepower = State(); transmission = State(); drive = State()
     body_type = State(); vin = State(); region = State(); description = State(); photos = State(); confirmation = State()
 
-STATE_ORDER=[Questionnaire.source,Questionnaire.drom_url,Questionnaire.make,Questionnaire.model,Questionnaire.year,
-    Questionnaire.generation,Questionnaire.mileage,Questionnaire.price,Questionnaire.engine_volume,
-    Questionnaire.fuel_type,Questionnaire.horsepower,Questionnaire.transmission,Questionnaire.drive,
-    Questionnaire.body_type,Questionnaire.vin,Questionnaire.description,Questionnaire.photos,Questionnaire.confirmation]
+PREVIOUS={Questionnaire.model.state:Questionnaire.make,Questionnaire.year.state:Questionnaire.model,
+    Questionnaire.generation.state:Questionnaire.year,Questionnaire.mileage.state:Questionnaire.generation,
+    Questionnaire.price.state:Questionnaire.mileage,Questionnaire.engine_volume.state:Questionnaire.price,
+    Questionnaire.fuel_type.state:Questionnaire.engine_volume,Questionnaire.horsepower.state:Questionnaire.fuel_type,
+    Questionnaire.transmission.state:Questionnaire.horsepower,Questionnaire.drive.state:Questionnaire.transmission,
+    Questionnaire.body_type.state:Questionnaire.drive,Questionnaire.vin.state:Questionnaire.body_type,
+    Questionnaire.description.state:Questionnaire.vin,Questionnaire.photos.state:Questionnaire.description}
 
 @router.message(F.text==BACK)
 async def go_back(message:Message,state:FSMContext):
-    current=await state.get_state(); names=[item.state for item in STATE_ORDER]
-    if current not in names or names.index(current)==0:
+    current=await state.get_state(); data=await state.get_data()
+    if current==Questionnaire.make.state:
+        previous=Questionnaire.drom_url if data.get("source_route")=="DROM" else Questionnaire.source
+    else: previous=PREVIOUS.get(current)
+    if previous is None:
         await message.answer("Это меню устарело. Откройте главное меню",reply_markup=main_menu()); return
-    previous=STATE_ORDER[names.index(current)-1]; await state.set_state(previous)
+    await state.set_state(previous)
     await render_step(message,state,previous)
 
 @router.message(F.text==SKIP)
@@ -50,6 +57,10 @@ async def skip_optional(message:Message,state:FSMContext):
 
 async def render_step(message,state,step):
     data=await state.get_data(); current={k:v for k,v in data.items() if v not in (None,"")}
+    if step is Questionnaire.source:
+        await message.answer("Выберите источник:",reply_markup=source_keyboard()); return
+    if step is Questionnaire.drom_url:
+        await message.answer("Отправьте HTTPS-ссылку Drom:",reply_markup=navigation(optional=True)); return
     prompts={Questionnaire.make:"Марка автомобиля",Questionnaire.model:"Модель",Questionnaire.year:"Год выпуска",
         Questionnaire.generation:"Поколение",Questionnaire.mileage:"Пробег, км",Questionnaire.price:"Цена продавца, ₽",
         Questionnaire.engine_volume:"Объём двигателя",Questionnaire.horsepower:"Мощность, л.с.",
@@ -66,8 +77,18 @@ def buttons(prefix: str, values: list[str]) -> InlineKeyboardMarkup:
     labels={"MANUAL":"Механика","AUTOMATIC":"Автомат","ROBOT":"Робот","VARIATOR":"Вариатор",
         "FWD":"Передний","RWD":"Задний","AWD":"Полный","UNKNOWN":"Не знаю",
         "GASOLINE":"Бензин","DIESEL":"Дизель","HYBRID":"Гибрид","ELECTRIC":"Электро","LPG":"Газ"}
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=labels.get(value,value),
-        callback_data=f"{prefix}:{value}")] for value in values])
+    rows=[[InlineKeyboardButton(text=labels.get(value,value),callback_data=f"{prefix}:{value}")] for value in values]
+    rows.extend([[InlineKeyboardButton(text="⬅️ Назад",callback_data="nav:back")],
+        [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel"),
+         InlineKeyboardButton(text="🏠 Главное меню",callback_data="nav:home")]])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def source_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Есть ссылка Drom",callback_data="source:DROM")],
+        [InlineKeyboardButton(text="✍️ Ввести данные вручную",callback_data="source:MANUAL")],
+        [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel")]])
 
 
 def photo_keyboard() -> InlineKeyboardMarkup:
@@ -76,7 +97,9 @@ def photo_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗑 Удалить последнюю", callback_data="photos:last"),
          InlineKeyboardButton(text="🧹 Очистить", callback_data="photos:clear")],
         [InlineKeyboardButton(text="Продолжить без фото", callback_data="photos:skip")],
-        [InlineKeyboardButton(text="Отмена", callback_data="cancel")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="nav:back")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="nav:cancel"),
+         InlineKeyboardButton(text="🏠 Главное меню", callback_data="nav:home")],
     ])
 
 
@@ -92,16 +115,13 @@ async def begin_for_message(message,state,db,user_id,settings):
     await state.clear(); await state.set_state(Questionnaire.source)
     user = await db.get_user(user_id)
     await state.update_data(region=user.region if user else "Весь РФ",test_mode=settings.test_mode)
-    keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔗 Есть ссылка Drom",callback_data="source:DROM")],
-        [InlineKeyboardButton(text="✍️ Ввести данные вручную",callback_data="source:MANUAL")],
-        [InlineKeyboardButton(text="❌ Отменить",callback_data="cancel")]])
-    await message.answer("Выберите источник:",reply_markup=keyboard)
+    await message.answer("Выберите источник:",reply_markup=source_keyboard())
 
 
 @router.callback_query(Questionnaire.source, F.data.startswith("source:"))
 async def source(callback: CallbackQuery, state: FSMContext) -> None:
     mode = callback.data.split(":", 1)[1]
-    await state.update_data(source_mode="MANUAL", photos=[])
+    await state.update_data(source_mode="MANUAL",source_route=mode, photos=[])
     if mode == "DROM":
         await state.set_state(Questionnaire.drom_url); await callback.message.answer("Отправьте HTTPS-ссылку Drom:",reply_markup=navigation(optional=True))
     else:
@@ -130,6 +150,8 @@ async def ask_make(message: Message, state: FSMContext) -> None:
 async def save_text(message: Message, state: FSMContext, key: str, next_state: State,
                     question: str, optional: bool = False) -> None:
     value = (message.text or "").strip()
+    if value in CONTROL_TEXTS or value in {BACK,SKIP}:
+        await message.answer("Используйте кнопку навигации, значение не сохранено."); return
     if optional and value.lower() in {"/skip", "не знаю", "unknown", "-"}: value = None
     elif not value or len(value) > 10_000:
         await message.answer("❌ Некорректное значение. Повторите:"); return
@@ -222,7 +244,9 @@ async def vin(message,state):
     await state.set_state(Questionnaire.description); await message.answer("Описание продавца:",reply_markup=navigation(optional=True))
 @router.message(Questionnaire.description)
 async def description(message,state):
-    value=(message.text or "").strip(); await state.update_data(seller_description=None if value.lower()=="/skip" else value)
+    value=(message.text or "").strip()
+    if value in CONTROL_TEXTS or value in {BACK,SKIP}: return
+    await state.update_data(seller_description=None if value.lower()=="/skip" else value)
     if await _finish_edit(message,state): return
     await state.set_state(Questionnaire.photos); await message.answer("Загрузите до 20 фотографий.",reply_markup=photo_keyboard())
 
@@ -299,7 +323,7 @@ async def edit_region(message,state): await save_text(message,state,"region",Que
 @router.callback_query(F.data=="cancel")
 async def cancel(event,state):
     await state.clear(); target=event.message if isinstance(event,CallbackQuery) else event
-    await target.answer("Анализ отменён.",reply_markup=main_menu())
+    await target.answer("Действие отменено",reply_markup=main_menu())
     if isinstance(event,CallbackQuery): await event.answer()
 
 @router.message(F.text.in_({CANCEL,HOME}))

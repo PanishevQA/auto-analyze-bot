@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
-from schemas import MatchStatus, PartCondition, PartOffer, PartPriceEstimate, PartSearchQuery, PartsStatus
+from schemas import MatchStatus, PartCondition, PartOffer, PartPriceEstimate, PartSearchQuery, PartsStatus, VehicleSpec
 from services.manual_parts_provider import validate_drom_baza_url
 from services.parts import normalize_offers
 from services.parts_matcher import match_offer, sanitize_listing_text
@@ -54,10 +54,11 @@ def parse_visible_cards(html: str, *, condition: PartCondition=PartCondition.NEW
 
 class BrowserPartsProvider:
     def __init__(self, start_url: str, *, headless: bool=True, timeout_seconds: int=30,
-                 max_offers: int=20, min_offers: int=3, match_confidence: float=.8) -> None:
+                 max_offers: int=20, min_offers: int=3, match_confidence: float=.8,agent=None) -> None:
         self.start_url=validate_drom_baza_url(start_url); self.headless=headless
         self.timeout_ms=timeout_seconds*1000; self.max_offers=min(max_offers,20)
         self.min_offers=min_offers; self.match_confidence=match_confidence
+        self.agent=agent
         self._playwright=self._browser=None
         self._lock=asyncio.Lock()
     async def start(self):
@@ -89,11 +90,19 @@ class BrowserPartsProvider:
             if not offers:
                 return PartPriceEstimate(defect_id=query.defect_id,status=PartsStatus.INSUFFICIENT_DATA,
                     provider="DROM_BAZA_BROWSER",missing_parts=[query.part_name])
-            matched=[match_offer(query,o) for o in offers]
+            matched=[match_offer(query,o) for o in offers]; metadata={"matching_source":"RULES_FALLBACK","fallback_used":True}
+            if self.agent:
+                vehicle=VehicleSpec(make=query.make,model=query.model,
+                    year=query.year,generation=query.generation,asking_price_rub=1,region=query.region)
+                try: matched,metadata=await self.agent.classify_offers(vehicle,query,offers)
+                except Exception: pass
             relevant=[o for o in matched if o.match_status is MatchStatus.EXACT or
                       (o.match_status is MatchStatus.LIKELY and float(o.match_confidence)>=self.match_confidence)]
-            return normalize_offers(relevant,condition=query.condition,quantity=query.quantity,
+            estimate=normalize_offers(relevant,condition=query.condition,quantity=query.quantity,
                 provider="DROM_BAZA_BROWSER",min_offers=self.min_offers)
+            if metadata.get("fallback_used") and estimate.status is PartsStatus.READY:
+                estimate=estimate.model_copy(update={"status":PartsStatus.INSUFFICIENT_DATA})
+            return estimate.model_copy(update={"defect_id":query.defect_id,"query_data":metadata})
         except BrowserBlocked:
             return PartPriceEstimate(status=PartsStatus.BLOCKED,provider="DROM_BAZA_BROWSER",missing_parts=[query.part_name])
         finally: await page.close()

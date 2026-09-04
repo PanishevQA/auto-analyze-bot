@@ -72,6 +72,9 @@ def format_deal_details(
         quote_meta=(f"\nИсточник: {html.escape(quoted.provider or 'не указан')}"
                     f"\nОбновлено: {quote_time}"
                     f"\nПредложений: {sum(item.offers_count for item in ready_parts)}")
+        matching=(quoted.query_data or {}).get("matching_source")
+        if matching:
+            quote_meta += "\nСоответствие проверено: " + ("Yandex AI" if matching=="YANDEX_AI" else "резервные правила")
     incomplete=("\n⚠️ Экономика рассчитана не полностью. Не оценено: " + ", ".join(map(html.escape,missing))) if missing else ""
     manual_queries="\n".join(f"• Поиск: {html.escape(str((part.query_data or {}).get('query','')))}\n  {html.escape(str((part.query_data or {}).get('manual_url','')))}"
         for part in parts if (part.query_data or {}).get("manual_url"))
@@ -115,7 +118,7 @@ def format_deal_details(
 Цена продавца: {money(vehicle.asking_price_rub)} ₽
 Быстрая продажа: {money(deal.quick_sale_price_rub)} ₽
 Ремонт: {money(deal.repair_likely_rub)} ₽
-Общие вложения: {money(deal.total_investment_rub)} ₽
+{'Общие вложения' if deal.economics_complete else 'Известные вложения без неоценённых запчастей'}: {money(deal.total_investment_rub)} ₽
 Прибыль: {profit_detail}
 ROI: {roi_detail}
 Безубыточная цена: {break_even_detail}
