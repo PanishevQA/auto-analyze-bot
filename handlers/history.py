@@ -1,4 +1,6 @@
 import html
+import re
+from datetime import datetime, timezone
 
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
@@ -15,6 +17,7 @@ from utils.validators import validate_price
 
 from utils.formatters import money
 from utils.messages import answer_long_html
+from utils.keyboards import HISTORY,NEW_ANALYSIS,HOME,main_menu
 
 router = Router()
 
@@ -26,27 +29,37 @@ def _date(value) -> str:
 
 
 @router.message(Command("history"))
-async def history(message: Message, command: CommandObject, db) -> None:
+async def history(message: Message, command: CommandObject, db, settings) -> None:
     argument = (command.args or "").strip()
     if argument:
-        await show_calculation(message, argument, db)
+        await show_calculation(message, argument, db, settings=settings)
         return
+    await show_history_buttons(message,db)
+
+@router.message(F.text==HISTORY)
+async def history_button(message:Message,db): await show_history_buttons(message,db)
+
+async def show_history_buttons(message:Message,db):
     calculations = await db.get_user_calculations_list(message.from_user.id)
     if not calculations:
-        await message.answer("📭 У вас пока нет сохраненных расчетов.")
+        await message.answer("📭 У вас пока нет сохраненных расчетов.",reply_markup=main_menu())
         return
-    rows = ["📋 <b>Ваши последние расчеты:</b>"]
-    for item in calculations:
-        rows.append(
-            f"<b>#{item['id']}</b> — {html.escape(str(item['car_model']))} ({item['year']})\n"
-            f"🛣 Пробег: {money(int(item['mileage']))} км\n📅 Дата: {_date(item['created_at'])}"
-        )
-    rows.append("💡 Для просмотра отчета используйте:\n<code>/history &lt;ID&gt;</code>\n"
-                "Например: <code>/history 1</code>")
-    await message.answer("\n\n".join(rows))
+    keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text=f"#{item['id']} {item['car_model']} {item['year']} — {item['created_at']:%d.%m}",callback_data=f"report:{item['id']}")]
+        for item in calculations]+[[InlineKeyboardButton(text="🏠 Главное меню",callback_data="history:home")]])
+    await message.answer("📋 <b>Ваши последние расчёты</b>",reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("report:"))
+async def report_button(callback:CallbackQuery,db,settings):
+    await show_calculation(callback.message,callback.data.split(":",1)[1],db,owner_id=callback.from_user.id,settings=settings)
+    await callback.answer()
+
+@router.callback_query(F.data=="history:home")
+async def history_home(callback:CallbackQuery):
+    await callback.message.answer("Главное меню",reply_markup=main_menu()); await callback.answer()
 
 
-async def show_calculation(message: Message, argument: str, db) -> None:
+async def show_calculation(message: Message, argument: str, db,owner_id:int|None=None,settings=None) -> None:
     try:
         calculation_id = int(argument)
         if calculation_id <= 0:
@@ -54,17 +67,35 @@ async def show_calculation(message: Message, argument: str, db) -> None:
     except ValueError:
         await message.answer("❌ Укажите положительный ID: <code>/history 1</code>")
         return
-    calculation = await db.get_calculation_by_id(calculation_id, message.from_user.id)
+    calculation = await db.get_calculation_by_id(calculation_id,owner_id or message.from_user.id)
     if calculation is None:
         await message.answer(
             f"❌ Расчет #{calculation_id} не найден или не принадлежит вам."
         )
         return
     heading = f"📊 <b>ОТЧЕТ #{calculation_id}</b> (от {_date(calculation['created_at'])})\n\n"
-    keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text="🔄 Пересчитать с другой ценой",callback_data=f"recalc:{calculation_id}")]])
-    await answer_long_html(message, heading + calculation["final_report"])
+    quoted_at=calculation.get("parts_quoted_at"); report=calculation["final_report"]
+    if quoted_at:
+        if quoted_at.tzinfo is None: quoted_at=quoted_at.replace(tzinfo=timezone.utc)
+        age=datetime.now(timezone.utc)-quoted_at
+        heading += f"Цены запчастей получены: {_date(quoted_at)} (возраст {int(age.total_seconds()//3600)} ч.)\n"
+        if settings and age.total_seconds()>settings.parts_price_cache_ttl_hours*3600:
+            heading += "⚠️ <b>Цены запчастей устарели</b>\nОкончательная экономика требует обновления.\n"
+            for label in ("Прибыль", "ROI", "Безубыточная цена", "Максимальная цена покупки",
+                          "Отличная цена", "Требуемая скидка"):
+                report=re.sub(rf"({re.escape(label)}:)[^\n]*",rf"\1 не рассчитана",report)
+        heading += "\n"
+    rows=[[InlineKeyboardButton(text="🔄 Пересчитать с другой ценой",callback_data=f"recalc:{calculation_id}")]]
+    if calculation.get("parts_data"): rows.append([InlineKeyboardButton(text="🔄 Обновить цены запчастей",callback_data=f"manualparts:{calculation_id}")])
+    rows.extend([[InlineKeyboardButton(text="📋 К истории",callback_data="history:list"),InlineKeyboardButton(text="🚗 Новый анализ",callback_data="analyze")],
+        [InlineKeyboardButton(text="🏠 Главное меню",callback_data="history:home")]])
+    keyboard=InlineKeyboardMarkup(inline_keyboard=rows)
+    await answer_long_html(message, heading + report)
     await message.answer("Действия с расчётом:",reply_markup=keyboard)
+
+@router.callback_query(F.data=="history:list")
+async def history_list_callback(callback:CallbackQuery,db):
+    await show_history_buttons(callback.message,db); await callback.answer()
 
 @router.callback_query(F.data.startswith("recalc:"))
 async def recalc_begin(callback:CallbackQuery,state:FSMContext,db):

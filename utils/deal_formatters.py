@@ -78,6 +78,12 @@ def format_deal_details(
     if manual_queries: incomplete += "\nОткройте Drom Базу вручную и пришлите 3–10 ссылок или скриншоты:\n"+manual_queries
     max_buy_detail=f"{money(deal.max_buy_price_rub)} ₽" if deal.economics_complete else "не рассчитана"
     excellent_detail=f"{money(deal.excellent_buy_price_rub)} ₽" if deal.economics_complete else "не рассчитана"
+    profit_detail=f"{money(deal.expected_profit_rub)} ₽" if deal.economics_complete else "не рассчитана"
+    roi_detail=f"{deal.roi_percent}%" if deal.economics_complete else "не рассчитан"
+    break_even_detail=f"{money(deal.break_even_buy_price_rub)} ₽" if deal.economics_complete else "не рассчитана"
+    discount_detail=f"{money(deal.required_discount_rub)} ₽" if deal.economics_complete else "не рассчитана"
+    preliminary=(f"\nПредварительный результат без неизвестных запчастей: {money(deal.expected_profit_rub)} ₽"
+                 if not deal.economics_complete and market else "")
     return f"""💹 <b>РЫНОК</b>
 {market_block}
 
@@ -110,12 +116,12 @@ def format_deal_details(
 Быстрая продажа: {money(deal.quick_sale_price_rub)} ₽
 Ремонт: {money(deal.repair_likely_rub)} ₽
 Общие вложения: {money(deal.total_investment_rub)} ₽
-Прибыль: {money(deal.expected_profit_rub)} ₽
-ROI: {deal.roi_percent}%
-Безубыточная цена: {money(deal.break_even_buy_price_rub)} ₽
+Прибыль: {profit_detail}
+ROI: {roi_detail}
+Безубыточная цена: {break_even_detail}
 Максимальная цена покупки: {max_buy_detail}
 Отличная цена: {excellent_detail}
-Требуемая скидка: {money(deal.required_discount_rub)} ₽
+Требуемая скидка: {discount_detail}{preliminary}
 Целевая прибыль: {money(deal.target_profit_rub)} ₽
 
 🏁 <b>РЕШЕНИЕ: {deal.verdict.value}</b>

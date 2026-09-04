@@ -27,7 +27,7 @@ class RepairCatalog:
         potential = [0, 0, 0]
         items: list[RepairItem] = []
         warnings: list[str] = []
-        for defect_index, defect in enumerate(defects, 1):
+        for defect in defects:
             entry = self.items.get(defect.code)
             if entry is None:
                 warnings.append(f"Нет цены для кода {defect.code}; требуется ручная оценка")
@@ -42,7 +42,7 @@ class RepairCatalog:
                 requires_manual_check=bool(entry.get("requires_manual_check", False)),
                 operation=str(entry.get("operation", "REPAIR")),
                 requires_part=bool(entry.get("requires_part", False)),
-                part_name=defect.part, defect_id=f"defect-{defect_index}",
+                part_name=defect.part, defect_id=defect.defect_id,
             ))
         return RepairEstimate(
             confirmed_min_rub=confirmed[0], confirmed_likely_rub=confirmed[1],

@@ -51,7 +51,10 @@ class Settings:
     parts_min_matched_offers: int = 3
     parts_match_confidence: Decimal = Decimal("0.80")
     parts_default_condition: str = "NEW"
-    yandex_parts_prompt_version: str = "parts-match-v1"
+    yandex_parts_prompt_version: str = "parts-query-v1"
+    yandex_parts_model_uri: str | None = None
+    yandex_parts_match_prompt_version: str = "parts-match-v1"
+    yandex_parts_max_retries: int = 1
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -95,7 +98,10 @@ class Settings:
             "parts_min_matched_offers": _positive_int("PARTS_MIN_MATCHED_OFFERS", 3),
             "parts_match_confidence": _decimal_between_zero_one("PARTS_MATCH_CONFIDENCE", "0.80"),
             "parts_default_condition": os.getenv("PARTS_DEFAULT_CONDITION", "NEW").upper(),
-            "yandex_parts_prompt_version": os.getenv("YANDEX_PARTS_PROMPT_VERSION", "parts-match-v1"),
+            "yandex_parts_prompt_version": os.getenv("YANDEX_PARTS_PROMPT_VERSION", "parts-query-v1"),
+            "yandex_parts_model_uri": os.getenv("YANDEX_PARTS_MODEL_URI") or os.getenv("YANDEX_VISION_MODEL_URI") or None,
+            "yandex_parts_match_prompt_version": os.getenv("YANDEX_PARTS_MATCH_PROMPT_VERSION", "parts-match-v1"),
+            "yandex_parts_max_retries": _nonnegative_int("YANDEX_PARTS_MAX_RETRIES",1),
         }
         missing = [key for key in ("telegram_bot_token",) if not values[key]]
         if not values["owner_telegram_ids"]:

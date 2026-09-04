@@ -13,6 +13,7 @@ from services.photos import PhotoCollection, PhotoLimitError, PhotoLimits
 from schemas import PhotoReference
 from utils.formatters import format_summary
 from utils.validators import validate_mileage, validate_price, validate_year
+from utils.keyboards import BACK,CANCEL,HOME,NEW_ANALYSIS,SKIP,main_menu,navigation
 
 router = Router()
 
@@ -23,9 +24,49 @@ class Questionnaire(StatesGroup):
     fuel_type = State(); horsepower = State(); transmission = State(); drive = State()
     body_type = State(); vin = State(); region = State(); description = State(); photos = State(); confirmation = State()
 
+STATE_ORDER=[Questionnaire.source,Questionnaire.drom_url,Questionnaire.make,Questionnaire.model,Questionnaire.year,
+    Questionnaire.generation,Questionnaire.mileage,Questionnaire.price,Questionnaire.engine_volume,
+    Questionnaire.fuel_type,Questionnaire.horsepower,Questionnaire.transmission,Questionnaire.drive,
+    Questionnaire.body_type,Questionnaire.vin,Questionnaire.description,Questionnaire.photos,Questionnaire.confirmation]
+
+@router.message(F.text==BACK)
+async def go_back(message:Message,state:FSMContext):
+    current=await state.get_state(); names=[item.state for item in STATE_ORDER]
+    if current not in names or names.index(current)==0:
+        await message.answer("Это меню устарело. Откройте главное меню",reply_markup=main_menu()); return
+    previous=STATE_ORDER[names.index(current)-1]; await state.set_state(previous)
+    await render_step(message,state,previous)
+
+@router.message(F.text==SKIP)
+async def skip_optional(message:Message,state:FSMContext):
+    current=await state.get_state(); transitions={
+        Questionnaire.drom_url.state:("source_url",None,Questionnaire.make),Questionnaire.generation.state:("generation",None,Questionnaire.mileage),
+        Questionnaire.engine_volume.state:("engine_volume_l",None,Questionnaire.fuel_type),Questionnaire.horsepower.state:("horsepower",None,Questionnaire.transmission),
+        Questionnaire.body_type.state:("body_type",None,Questionnaire.vin),Questionnaire.vin.state:("vin",None,Questionnaire.description),
+        Questionnaire.description.state:("seller_description",None,Questionnaire.photos)}
+    if current not in transitions: await message.answer("Это поле нельзя пропустить."); return
+    key,value,next_state=transitions[current]; await state.update_data(**{key:value}); await state.set_state(next_state)
+    await render_step(message,state,next_state)
+
+async def render_step(message,state,step):
+    data=await state.get_data(); current={k:v for k,v in data.items() if v not in (None,"")}
+    prompts={Questionnaire.make:"Марка автомобиля",Questionnaire.model:"Модель",Questionnaire.year:"Год выпуска",
+        Questionnaire.generation:"Поколение",Questionnaire.mileage:"Пробег, км",Questionnaire.price:"Цена продавца, ₽",
+        Questionnaire.engine_volume:"Объём двигателя",Questionnaire.horsepower:"Мощность, л.с.",
+        Questionnaire.body_type:"Тип кузова",Questionnaire.vin:"VIN",Questionnaire.description:"Описание продавца"}
+    if step is Questionnaire.fuel_type: await message.answer("Тип топлива:",reply_markup=buttons("fuel",["GASOLINE","DIESEL","HYBRID","ELECTRIC","LPG","UNKNOWN"])); return
+    if step is Questionnaire.transmission: await message.answer("Коробка:",reply_markup=buttons("trans",["MANUAL","AUTOMATIC","ROBOT","VARIATOR","UNKNOWN"])); return
+    if step is Questionnaire.drive: await message.answer("Привод:",reply_markup=buttons("drive",["FWD","RWD","AWD","UNKNOWN"])); return
+    if step is Questionnaire.photos: await message.answer(f"Загружено фотографий: {len(data.get('photos',[]))}",reply_markup=photo_keyboard()); return
+    key=step.state.rsplit(":",1)[-1]; value=current.get({"price":"asking_price_rub","mileage":"mileage_km","engine_volume":"engine_volume_l"}.get(key,key),"не указано")
+    await message.answer(f"{prompts.get(step,'Введите значение')}\nТекущее значение: {value}",reply_markup=navigation(optional=step in {Questionnaire.generation,Questionnaire.engine_volume,Questionnaire.horsepower,Questionnaire.body_type,Questionnaire.vin,Questionnaire.description}))
+
 
 def buttons(prefix: str, values: list[str]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=value,
+    labels={"MANUAL":"Механика","AUTOMATIC":"Автомат","ROBOT":"Робот","VARIATOR":"Вариатор",
+        "FWD":"Передний","RWD":"Задний","AWD":"Полный","UNKNOWN":"Не знаю",
+        "GASOLINE":"Бензин","DIESEL":"Дизель","HYBRID":"Гибрид","ELECTRIC":"Электро","LPG":"Газ"}
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=labels.get(value,value),
         callback_data=f"{prefix}:{value}")] for value in values])
 
 
@@ -40,12 +81,21 @@ def photo_keyboard() -> InlineKeyboardMarkup:
 
 
 @router.callback_query(F.data == "analyze")
-async def begin(callback: CallbackQuery, state: FSMContext, db) -> None:
+async def begin(callback: CallbackQuery, state: FSMContext, db, settings) -> None:
+    await begin_for_message(callback.message,state,db,callback.from_user.id,settings); await callback.answer()
+
+@router.message(F.text==NEW_ANALYSIS)
+async def begin_button(message:Message,state:FSMContext,db,settings):
+    await begin_for_message(message,state,db,message.from_user.id,settings)
+
+async def begin_for_message(message,state,db,user_id,settings):
     await state.clear(); await state.set_state(Questionnaire.source)
-    user = await db.get_user(callback.from_user.id)
-    await state.update_data(region=user.region if user else "Весь РФ")
-    await callback.message.answer("Выберите источник:", reply_markup=buttons("source", ["DROM", "MANUAL"]))
-    await callback.answer()
+    user = await db.get_user(user_id)
+    await state.update_data(region=user.region if user else "Весь РФ",test_mode=settings.test_mode)
+    keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔗 Есть ссылка Drom",callback_data="source:DROM")],
+        [InlineKeyboardButton(text="✍️ Ввести данные вручную",callback_data="source:MANUAL")],
+        [InlineKeyboardButton(text="❌ Отменить",callback_data="cancel")]])
+    await message.answer("Выберите источник:",reply_markup=keyboard)
 
 
 @router.callback_query(Questionnaire.source, F.data.startswith("source:"))
@@ -53,7 +103,7 @@ async def source(callback: CallbackQuery, state: FSMContext) -> None:
     mode = callback.data.split(":", 1)[1]
     await state.update_data(source_mode="MANUAL", photos=[])
     if mode == "DROM":
-        await state.set_state(Questionnaire.drom_url); await callback.message.answer("Отправьте HTTPS-ссылку Drom:")
+        await state.set_state(Questionnaire.drom_url); await callback.message.answer("Отправьте HTTPS-ссылку Drom:",reply_markup=navigation(optional=True))
     else:
         await state.update_data(source_url=None); await ask_make(callback.message, state)
     await callback.answer()
@@ -74,7 +124,7 @@ async def drom_url(message: Message, state: FSMContext) -> None:
 
 
 async def ask_make(message: Message, state: FSMContext) -> None:
-    await state.set_state(Questionnaire.make); await message.answer("Марка автомобиля:")
+    await state.set_state(Questionnaire.make); await message.answer("Марка автомобиля:",reply_markup=navigation())
 
 
 async def save_text(message: Message, state: FSMContext, key: str, next_state: State,
@@ -104,7 +154,7 @@ async def year(message, state):
     except ValueError as error: await message.answer(f"❌ {error}"); return
     await state.update_data(year=value)
     if await _finish_edit(message,state): return
-    await state.set_state(Questionnaire.generation); await message.answer("Поколение или /skip:")
+    await state.set_state(Questionnaire.generation); await message.answer("Поколение:",reply_markup=navigation(optional=True))
 
 @router.message(Questionnaire.generation)
 async def generation(message, state): await save_text(message,state,"generation",Questionnaire.mileage,"Пробег, км:",True)
@@ -114,14 +164,14 @@ async def mileage(message, state):
     except ValueError as error: await message.answer(f"❌ {error}"); return
     await state.update_data(mileage_km=value)
     if await _finish_edit(message,state): return
-    await state.set_state(Questionnaire.price); await message.answer("Цена продавца, ₽:")
+    await state.set_state(Questionnaire.price); await message.answer("Цена продавца, ₽:",reply_markup=navigation())
 @router.message(Questionnaire.price)
 async def price(message, state):
     try: value=validate_price(message.text or "")
     except ValueError as error: await message.answer(f"❌ {error}"); return
     await state.update_data(asking_price_rub=value)
     if await _finish_edit(message,state): return
-    await state.set_state(Questionnaire.engine_volume); await message.answer("Объём двигателя, например 1.6, или /skip:")
+    await state.set_state(Questionnaire.engine_volume); await message.answer("Объём двигателя, например 1.6:",reply_markup=navigation(optional=True))
 @router.message(Questionnaire.engine_volume)
 async def engine_volume(message, state):
     raw=(message.text or "").strip().replace(",", ".")
@@ -139,7 +189,7 @@ async def fuel(callback,state):
     await state.update_data(fuel_type=callback.data.split(":",1)[1])
     if await _finish_edit(callback.message,state): await callback.answer(); return
     await state.set_state(Questionnaire.horsepower)
-    await callback.message.answer("Мощность, л.с., или /skip:"); await callback.answer()
+    await callback.message.answer("Мощность, л.с.:",reply_markup=navigation(optional=True)); await callback.answer()
 @router.message(Questionnaire.horsepower)
 async def horsepower(message,state):
     raw=(message.text or "").strip(); value=None if raw.lower() in {"/skip","не знаю","unknown","-"} else int(raw) if raw.isdigit() else -1
@@ -159,7 +209,7 @@ async def drive(callback,state):
     await state.update_data(drive=callback.data.split(":",1)[1])
     if await _finish_edit(callback.message,state): await callback.answer(); return
     await state.set_state(Questionnaire.body_type)
-    await callback.message.answer("Тип кузова или /skip:"); await callback.answer()
+    await callback.message.answer("Тип кузова:",reply_markup=navigation(optional=True)); await callback.answer()
 @router.message(Questionnaire.body_type)
 async def body(message,state): await save_text(message,state,"body_type",Questionnaire.vin,"VIN (17 символов) или /skip:",True)
 @router.message(Questionnaire.vin)
@@ -169,7 +219,7 @@ async def vin(message,state):
         await message.answer("❌ VIN должен содержать 17 допустимых символов:"); return
     await state.update_data(vin=value)
     if await _finish_edit(message,state): return
-    await state.set_state(Questionnaire.description); await message.answer("Описание продавца или /skip:")
+    await state.set_state(Questionnaire.description); await message.answer("Описание продавца:",reply_markup=navigation(optional=True))
 @router.message(Questionnaire.description)
 async def description(message,state):
     value=(message.text or "").strip(); await state.update_data(seller_description=None if value.lower()=="/skip" else value)
@@ -190,7 +240,13 @@ async def add_photo(message: Message,state:FSMContext,settings) -> None:
             settings.max_photo_size_bytes,settings.max_total_photos_size_bytes))
     except (PhotoLimitError,ValueError) as error: await message.answer(f"❌ {error}"); return
     if added: await state.update_data(photos=collection.dump())
-    await message.answer(f"Фотографий: {len(collection.photos)}",reply_markup=photo_keyboard())
+    text=f"Загружено фотографий: {len(collection.photos)} из {settings.max_photos_per_analysis}"
+    status_id=data.get("photo_status_message_id")
+    if status_id:
+        try: await message.bot.edit_message_text(text,chat_id=message.chat.id,message_id=status_id,reply_markup=photo_keyboard())
+        except Exception: status_id=None
+    if not status_id:
+        status=await message.answer(text,reply_markup=photo_keyboard()); await state.update_data(photo_status_message_id=status.message_id)
 
 @router.callback_query(Questionnaire.photos,F.data.startswith("photos:"))
 async def photos_control(callback,state):
@@ -205,8 +261,10 @@ async def photos_control(callback,state):
 async def show_confirmation(message,state):
     data=await state.get_data(); request_id=secrets.token_urlsafe(9); await state.update_data(analysis_request_id=request_id)
     await state.set_state(Questionnaire.confirmation)
-    keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Подтвердить платные запросы",callback_data=f"confirm:{request_id}")],[InlineKeyboardButton(text="✏️ Изменить данные",callback_data="edit")],[InlineKeyboardButton(text="Отмена",callback_data="cancel")]])
-    await message.answer(format_summary(data),reply_markup=keyboard)
+    keyboard=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Запустить анализ",callback_data=f"confirm:{request_id}")],[InlineKeyboardButton(text="✏️ Изменить данные",callback_data="edit")],[InlineKeyboardButton(text="⬅️ Назад",callback_data="edit")],[InlineKeyboardButton(text="❌ Отменить",callback_data="cancel")]])
+    warning=("🧪 APIpoint работает в тестовом режиме.\nПлатный запрос к APIpoint не выполнится.\n"
+             "Запрос к Yandex AI может оставаться платным.\n\n" if data.get("test_mode") else "")
+    await message.answer(warning+format_summary(data),reply_markup=keyboard)
 
 @router.callback_query(Questionnaire.confirmation,F.data=="edit")
 async def edit_menu(callback,state):
@@ -241,5 +299,9 @@ async def edit_region(message,state): await save_text(message,state,"region",Que
 @router.callback_query(F.data=="cancel")
 async def cancel(event,state):
     await state.clear(); target=event.message if isinstance(event,CallbackQuery) else event
-    await target.answer("Анализ отменён.")
+    await target.answer("Анализ отменён.",reply_markup=main_menu())
     if isinstance(event,CallbackQuery): await event.answer()
+
+@router.message(F.text.in_({CANCEL,HOME}))
+async def cancel_button(message:Message,state:FSMContext):
+    await state.clear(); await message.answer("Главное меню",reply_markup=main_menu())

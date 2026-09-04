@@ -18,6 +18,7 @@ from services.parts_orchestrator import PartsSearchOrchestrator
 from schemas import PartsStatus
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.messages import answer_long_html
+from utils.keyboards import main_menu
 
 router = Router()
 
@@ -98,9 +99,10 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
                 await callback.message.answer("Можно добавить скриншоты выдачи для расчёта запчастей.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
                         text="📷 Добавить объявления",callback_data=f"manualparts:{calculation_id}")]]))
+            await callback.message.answer("Главное меню", reply_markup=main_menu())
     except Exception:
         await db.complete_analysis(calculation_id, status="FAILED")
-        await callback.message.answer("❌ Анализ завершился ошибкой. Временные файлы удалены.")
+        await callback.message.answer("❌ Анализ завершился ошибкой. Временные файлы удалены.", reply_markup=main_menu())
         return
     finally:
         heartbeat.cancel();

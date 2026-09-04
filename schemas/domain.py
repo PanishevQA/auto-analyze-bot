@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -123,10 +124,12 @@ class PartCondition(StrEnum):
     NEW="NEW"; USED="USED"
 
 class PartSearchQuery(StrictModel):
+    defect_id: str = Field(default_factory=lambda: uuid4().hex,min_length=1,max_length=64)
     vin: str | None = Field(default=None, pattern=r"^[A-HJ-NPR-Z0-9]{17}$")
     make: str; model: str; year: int; generation: str | None = None
     part_name: str; oem_number: str | None = None; side: str | None = None
     position: str | None = None
+    search_phrase: str | None = Field(default=None,max_length=300)
     quantity: int = Field(default=1, gt=0); region: str
     condition: PartCondition = PartCondition.NEW
 
@@ -144,6 +147,7 @@ class PartOffer(StrictModel):
     match_reasons: list[str] = Field(default_factory=list)
 
 class PartPriceEstimate(StrictModel):
+    defect_id: str | None = Field(default=None,max_length=64)
     status: PartsStatus; selected_price_rub: int | None = Field(default=None, ge=0)
     min_price_rub: int | None = Field(default=None, ge=0); median_price_rub: int | None = Field(default=None, ge=0)
     max_price_rub: int | None = Field(default=None, ge=0); offers_count: int = Field(default=0, ge=0)
@@ -170,6 +174,7 @@ class PhotoReference(StrictModel):
 
 
 class VisibleDefect(StrictModel):
+    defect_id: str = Field(default_factory=lambda: uuid4().hex,min_length=1,max_length=64)
     code: str = Field(pattern=r"^[a-z0-9_]+$")
     part: str = Field(min_length=1, max_length=200)
     severity: DefectSeverity

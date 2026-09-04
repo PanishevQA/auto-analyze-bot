@@ -69,6 +69,11 @@ class BrowserPartsProvider:
         if self._playwright: await self._playwright.stop()
     async def search(self, query: PartSearchQuery) -> PartPriceEstimate:
         async with self._lock:
+            if not self._browser:
+                try: await self.start()
+                except Exception:
+                    return PartPriceEstimate(defect_id=query.defect_id,status=PartsStatus.UNAVAILABLE,
+                        provider="DROM_BAZA_BROWSER",missing_parts=[query.part_name])
             return await self._search_once(query)
     async def _search_once(self, query: PartSearchQuery) -> PartPriceEstimate:
         if not self._browser: raise RuntimeError("BrowserPartsProvider не запущен")
@@ -78,9 +83,12 @@ class BrowserPartsProvider:
             content=(await page.locator("body").inner_text()).casefold()
             if any(marker in content for marker in BLOCK_MARKERS): return PartPriceEstimate(status=PartsStatus.BLOCKED,provider="DROM_BAZA_BROWSER",missing_parts=[query.part_name])
             field=page.get_by_placeholder("Название запчасти или её номер")
-            await field.fill(query.part_name); await page.get_by_role("button",name="Найти").click()
+            await field.fill(query.search_phrase or query.part_name); await page.get_by_role("button",name="Найти").click()
             await page.wait_for_load_state("domcontentloaded")
             offers=parse_visible_cards(await page.content(),condition=query.condition)[:self.max_offers]
+            if not offers:
+                return PartPriceEstimate(defect_id=query.defect_id,status=PartsStatus.INSUFFICIENT_DATA,
+                    provider="DROM_BAZA_BROWSER",missing_parts=[query.part_name])
             matched=[match_offer(query,o) for o in offers]
             relevant=[o for o in matched if o.match_status is MatchStatus.EXACT or
                       (o.match_status is MatchStatus.LIKELY and float(o.match_confidence)>=self.match_confidence)]
@@ -95,6 +103,7 @@ class FixtureBrowserPartsProvider:
     async def search(self, query: PartSearchQuery) -> PartPriceEstimate:
         try: offers=[match_offer(query,o) for o in parse_visible_cards(self.html,condition=query.condition)]
         except BrowserBlocked: return PartPriceEstimate(status=PartsStatus.BLOCKED,provider="DROM_BAZA_BROWSER")
+        if not offers: return PartPriceEstimate(defect_id=query.defect_id,status=PartsStatus.INSUFFICIENT_DATA,provider="DROM_BAZA_BROWSER")
         relevant=[o for o in offers if o.match_status in {MatchStatus.EXACT,MatchStatus.LIKELY}]
         return normalize_offers(relevant,condition=query.condition,quantity=query.quantity,
             provider="DROM_BAZA_BROWSER",min_offers=self.min_offers)

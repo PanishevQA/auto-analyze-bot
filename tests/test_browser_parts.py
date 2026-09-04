@@ -19,7 +19,7 @@ def test_two_visible_prices_use_current_price():
 @pytest.mark.asyncio
 async def test_blocked_and_changed_layout_stop_safely():
     assert (await FixtureBrowserPartsProvider((FIX/"blocked.html").read_text()).search(query())).status is PartsStatus.BLOCKED
-    assert (await FixtureBrowserPartsProvider((FIX/"changed_layout.html").read_text()).search(query())).status is PartsStatus.NO_MATCH
+    assert (await FixtureBrowserPartsProvider((FIX/"changed_layout.html").read_text()).search(query())).status is PartsStatus.INSUFFICIENT_DATA
 
 @pytest.mark.parametrize("url",["http://baza.drom.ru/1","https://evil.test/","https://baza.drom.ru.evil.test/1"])
 def test_url_allowlist(url):
