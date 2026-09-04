@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-MIGRATION_VERSION = 3
+MIGRATION_VERSION = 4
 P1_COLUMNS = {
     "analysis_request_id": "VARCHAR(64)", "idempotency_key": "VARCHAR(128)",
     "status": "VARCHAR(20) NOT NULL DEFAULT 'COMPLETED'", "source_url": "TEXT",
@@ -22,6 +22,13 @@ P1_COLUMNS = {
 
 async def migrate(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
+        user_rows = await connection.execute(text("PRAGMA table_info(users)"))
+        user_columns = {row[1] for row in user_rows}
+        if user_columns:
+            if "target_profit_rub" not in user_columns:
+                await connection.execute(text('ALTER TABLE users ADD COLUMN "target_profit_rub" INTEGER'))
+            if "parts_condition" not in user_columns:
+                await connection.execute(text('ALTER TABLE users ADD COLUMN "parts_condition" VARCHAR(10)'))
         rows = await connection.execute(text("PRAGMA table_info(calculations)"))
         existing = {row[1] for row in rows}
         if not existing: return

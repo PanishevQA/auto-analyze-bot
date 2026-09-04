@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from contextlib import suppress
 from decimal import Decimal
 from pathlib import Path
@@ -15,7 +16,7 @@ from services.deal_engine import DealEngine
 from services.repair_catalog import RepairCatalog
 from services.photos import temporary_analysis_directory
 from services.parts_orchestrator import PartsSearchOrchestrator
-from schemas import PartsStatus
+from schemas import PartCondition, PartsStatus
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.messages import answer_long_html
 from utils.keyboards import main_menu
@@ -61,12 +62,17 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
                 condition = vision.unavailable("Фотографии не удалось скачать или обработать")
             repairs = repair_catalog.estimate(condition.defects, vehicle.region)
             blocking = repair_catalog.has_blocking_risk(condition.defects)
-            part_quotes=await parts_orchestrator.estimate(vehicle,condition.defects,repairs)
+            user=await db.get_user(callback.from_user.id)
+            part_condition=PartCondition(user.parts_condition) if user and user.parts_condition else PartCondition(settings.parts_default_condition)
+            part_quotes=await parts_orchestrator.estimate(vehicle,condition.defects,repairs,part_condition)
             parts_total=sum(q.selected_price_rub or 0 for q in part_quotes if q.status is PartsStatus.READY)
             parts_complete=all(q.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for q in part_quotes)
             overall_parts_status=(PartsStatus.NOT_REQUIRED if not part_quotes else PartsStatus.READY
                 if parts_complete else next(q.status for q in part_quotes if q.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED}))
-            deal = deal_engine.calculate(asking_price_rub=vehicle.asking_price_rub, market=market,
+            active_engine=deal_engine
+            if user and user.target_profit_rub is not None:
+                active_engine=DealEngine(replace(deal_engine.settings,target_profit_rub=user.target_profit_rub))
+            deal = active_engine.calculate(asking_price_rub=vehicle.asking_price_rub, market=market,
                 repairs=repairs, coverage=condition.coverage, has_blocking_risk=blocking,
                 parts_total_rub=parts_total, parts_complete=parts_complete)
             summary = format_deal_summary(vehicle, deal, market)

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 import pytest
-from schemas import MatchStatus, PartCondition, PartOffer, PartSearchQuery, PartsStatus
+from schemas import MatchStatus, PartCondition, PartOffer, PartPriceEstimate, PartSearchQuery, PartsStatus
 from services.parts import CachedPartsProvider, normalize_offers
 
 def offer(price,delivery=0,condition=PartCondition.NEW):
@@ -35,3 +35,27 @@ def test_cache_key_is_hash_not_plain_vin():
     import hashlib
     expected=hashlib.sha256((query.model_dump_json()+"|Provider").encode()).hexdigest()
     assert synthetic_vin not in expected and len(expected)==64
+
+from datetime import timedelta
+from services.parts import is_parts_quote_fresh, mark_stale_quotes
+
+
+def test_quote_freshness_marks_expired_ready_quote_stale():
+    now=datetime.now(timezone.utc)
+    quote=PartPriceEstimate(status=PartsStatus.READY,selected_price_rub=100,
+        min_price_rub=100,median_price_rub=100,max_price_rub=100,
+        fetched_at=now-timedelta(hours=13))
+    assert not is_parts_quote_fresh(quote,now,timedelta(hours=12))
+    assert mark_stale_quotes([quote],now=now,ttl=timedelta(hours=12))[0].status is PartsStatus.STALE
+
+
+def test_manual_normalization_preserves_defect_id():
+    from services.manual_parts_provider import ManualBrowserPartsProvider
+    query=PartSearchQuery(defect_id="left-light",make="Lada",model="Granta",year=2012,
+        part_name="фара",region="x",condition=PartCondition.NEW)
+    offers=[PartOffer(provider="manual",part_name="фара Lada Granta",condition=PartCondition.NEW,
+        unit_price_rub=value,in_stock=True,fetched_at=datetime.now(timezone.utc),
+        match_status=MatchStatus.EXACT,offer_url=f"https://baza.drom.ru/item/{value}") for value in (100,200,300)]
+    result=ManualBrowserPartsProvider("https://baza.drom.ru/sell_spare_parts/").normalize_submitted(query,offers)
+    assert result.defect_id == "left-light"
+    assert result.median_price_rub == 200

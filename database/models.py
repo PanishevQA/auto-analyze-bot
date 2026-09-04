@@ -17,6 +17,8 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
     region: Mapped[str] = mapped_column(String(100), nullable=False, default="Весь РФ")
+    target_profit_rub: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parts_condition: Mapped[str | None] = mapped_column(String(10), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp())
     calculations: Mapped[list["Calculation"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

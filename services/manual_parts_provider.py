@@ -28,5 +28,6 @@ class ManualBrowserPartsProvider:
     def normalize_submitted(self, query: PartSearchQuery, offers: list[PartOffer]) -> PartPriceEstimate:
         for offer in offers:
             if offer.offer_url: validate_drom_baza_url(str(offer.offer_url))
-        return normalize_offers(offers,condition=query.condition,quantity=query.quantity,
+        estimate = normalize_offers(offers,condition=query.condition,quantity=query.quantity,
             provider="DROM_BAZA_MANUAL",min_offers=self.min_offers)
+        return estimate.model_copy(update={"defect_id": query.defect_id})

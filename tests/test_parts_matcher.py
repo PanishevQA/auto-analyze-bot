@@ -37,7 +37,7 @@ async def test_screenshot_extraction_uses_structured_yandex_payload(tmp_path):
             assert all(item["type"] in {"input_text","input_image"} for item in payload["input"][0]["content"])
             return json.dumps({"offers":[{"title":"Ford Focus фара левая передняя",
                 "current_price_rub":10000,"old_price_rub":12000,"delivery_price_rub":500,
-                "condition":"NEW","location":"Москва","seller":"магазин","offer_url":"https://baza.drom.ru/1","oem_number":None}]}),{}
+                "condition":"NEW","in_stock":True,"location":"Москва","seller":"магазин","offer_url":"https://baza.drom.ru/1","oem_number":None}]}),{}
     image=tmp_path/"shot.jpg"; image.write_bytes(b"fake")
     q=PartSearchQuery(make="Ford",model="Focus",year=2015,part_name="фара",region="Москва")
     offers=await YandexPartsAgent(Vision()).extract_screenshots([image],q)

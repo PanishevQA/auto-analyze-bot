@@ -12,6 +12,25 @@ class PartsPriceProvider(Protocol):
     async def search(self, query: PartSearchQuery) -> PartPriceEstimate: ...
 
 
+def is_parts_quote_fresh(quote: PartPriceEstimate, now: datetime,
+                         ttl: timedelta) -> bool:
+    """Return whether a successful quote may be used as final economics input."""
+    fetched = quote.fetched_at
+    if quote.status is not PartsStatus.READY or fetched is None:
+        return False
+    if fetched.tzinfo is None:
+        fetched = fetched.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return timedelta(0) <= now - fetched <= ttl
+
+
+def mark_stale_quotes(quotes: list[PartPriceEstimate], *, now: datetime,
+                      ttl: timedelta) -> list[PartPriceEstimate]:
+    return [quote if quote.status is not PartsStatus.READY or is_parts_quote_fresh(quote, now, ttl)
+            else quote.model_copy(update={"status": PartsStatus.STALE}) for quote in quotes]
+
+
 def normalize_offers(offers: list[PartOffer], *, condition: PartCondition,
                      quantity: int = 1, provider: str | None = None,
                      min_offers: int = 1) -> PartPriceEstimate:

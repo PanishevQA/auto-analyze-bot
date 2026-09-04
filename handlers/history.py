@@ -1,6 +1,7 @@
 import html
-import re
-from datetime import datetime, timezone
+import logging
+from dataclasses import replace
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
@@ -12,6 +13,7 @@ from aiogram import F
 from schemas import ConditionAssessment, MarketEstimate, RepairEstimate, VehicleSpec, PartPriceEstimate, PartsStatus
 from services.repair_catalog import RepairCatalog
 from services.deal_engine import DealEngine
+from services.parts import mark_stale_quotes
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.validators import validate_price
 
@@ -20,6 +22,7 @@ from utils.messages import answer_long_html
 from utils.keyboards import HISTORY,NEW_ANALYSIS,HOME,main_menu
 
 router = Router()
+logger=logging.getLogger(__name__)
 
 class Recalculation(StatesGroup): waiting_price = State()
 
@@ -29,10 +32,10 @@ def _date(value) -> str:
 
 
 @router.message(Command("history"))
-async def history(message: Message, command: CommandObject, db, settings) -> None:
+async def history(message: Message, command: CommandObject, db, settings, deal_engine, repair_catalog) -> None:
     argument = (command.args or "").strip()
     if argument:
-        await show_calculation(message, argument, db, settings=settings)
+        await show_calculation(message, argument, db, settings=settings,deal_engine=deal_engine,repair_catalog=repair_catalog)
         return
     await show_history_buttons(message,db)
 
@@ -50,16 +53,18 @@ async def show_history_buttons(message:Message,db):
     await message.answer("📋 <b>Ваши последние расчёты</b>",reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("report:"))
-async def report_button(callback:CallbackQuery,db,settings):
-    await show_calculation(callback.message,callback.data.split(":",1)[1],db,owner_id=callback.from_user.id,settings=settings)
+async def report_button(callback:CallbackQuery,db,settings,deal_engine,repair_catalog):
+    await show_calculation(callback.message,callback.data.split(":",1)[1],db,owner_id=callback.from_user.id,
+        settings=settings,deal_engine=deal_engine,repair_catalog=repair_catalog)
     await callback.answer()
 
 @router.callback_query(F.data=="history:home")
-async def history_home(callback:CallbackQuery):
-    await callback.message.answer("Главное меню",reply_markup=main_menu()); await callback.answer()
+async def history_home(callback:CallbackQuery,state:FSMContext):
+    await state.clear(); await callback.message.answer("Главное меню",reply_markup=main_menu()); await callback.answer()
 
 
-async def show_calculation(message: Message, argument: str, db,owner_id:int|None=None,settings=None) -> None:
+async def show_calculation(message: Message, argument: str, db,owner_id:int|None=None,settings=None,
+                           deal_engine=None,repair_catalog=None) -> None:
     try:
         calculation_id = int(argument)
         if calculation_id <= 0:
@@ -81,10 +86,30 @@ async def show_calculation(message: Message, argument: str, db,owner_id:int|None
         heading += f"Цены запчастей получены: {_date(quoted_at)} (возраст {int(age.total_seconds()//3600)} ч.)\n"
         if settings and age.total_seconds()>settings.parts_price_cache_ttl_hours*3600:
             heading += "⚠️ <b>Цены запчастей устарели</b>\nОкончательная экономика требует обновления.\n"
-            for label in ("Прибыль", "ROI", "Безубыточная цена", "Максимальная цена покупки",
-                          "Отличная цена", "Требуемая скидка"):
-                report=re.sub(rf"({re.escape(label)}:)[^\n]*",rf"\1 не рассчитана",report)
         heading += "\n"
+    if settings and deal_engine and repair_catalog:
+        try:
+            vehicle=VehicleSpec.model_validate(calculation["car_data"])
+            market_data=calculation.get("market_data") or {}
+            market=MarketEstimate.model_validate(market_data) if market_data.get("source") else None
+            repairs=RepairEstimate.model_validate(calculation["repair_estimate"])
+            condition=ConditionAssessment.model_validate(calculation["condition_data"])
+            parts=[PartPriceEstimate.model_validate(item) for item in (calculation.get("parts_data") or [])]
+            parts=mark_stale_quotes(parts,now=datetime.now(timezone.utc),
+                ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
+            complete=all(item.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in parts)
+            total=sum(item.selected_price_rub or 0 for item in parts if item.status is PartsStatus.READY)
+            user=await db.get_user(owner_id or message.from_user.id)
+            active_engine=deal_engine
+            if user and user.target_profit_rub is not None:
+                active_engine=DealEngine(replace(deal_engine.settings,target_profit_rub=user.target_profit_rub))
+            deal=active_engine.calculate(asking_price_rub=vehicle.asking_price_rub,market=market,repairs=repairs,
+                coverage=condition.coverage,has_blocking_risk=repair_catalog.has_blocking_risk(condition.defects),
+                parts_total_rub=total,parts_complete=complete)
+            report=format_deal_summary(vehicle,deal,market)+"\n\n"+format_deal_details(vehicle,market,condition,repairs,deal,parts)
+        except Exception as error:
+            logger.warning("Structured history rebuild failed calculation_id=%s error=%s",
+                           calculation_id,type(error).__name__)
     rows=[[InlineKeyboardButton(text="🔄 Пересчитать с другой ценой",callback_data=f"recalc:{calculation_id}")]]
     if calculation.get("parts_data"): rows.append([InlineKeyboardButton(text="🔄 Обновить цены запчастей",callback_data=f"manualparts:{calculation_id}")])
     rows.extend([[InlineKeyboardButton(text="📋 К истории",callback_data="history:list"),InlineKeyboardButton(text="🚗 Новый анализ",callback_data="analyze")],
@@ -105,7 +130,7 @@ async def recalc_begin(callback:CallbackQuery,state:FSMContext,db):
     await callback.message.answer("Введите новую цену покупки, ₽:"); await callback.answer()
 
 @router.message(Recalculation.waiting_price)
-async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngine,repair_catalog:RepairCatalog):
+async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngine,repair_catalog:RepairCatalog,settings):
     try: new_price=validate_price(message.text or "")
     except ValueError as error: await message.answer(f"❌ {error}"); return
     data=await state.get_data(); old=await db.get_calculation_by_id(data["parent_calculation_id"],message.from_user.id)
@@ -115,6 +140,7 @@ async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngin
         repairs=RepairEstimate.model_validate(old["repair_estimate"])
         condition=ConditionAssessment.model_validate(old["condition_data"])
         parts=[PartPriceEstimate.model_validate(item) for item in (old.get("parts_data") or [])]
+        parts=mark_stale_quotes(parts,now=datetime.now(timezone.utc),ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
     except Exception:
         await message.answer("Этот расчёт создан в старой версии бота и не содержит данных о состоянии автомобиля. Выполните новый анализ."); await state.clear(); return
     blocking=repair_catalog.has_blocking_risk(condition.defects)

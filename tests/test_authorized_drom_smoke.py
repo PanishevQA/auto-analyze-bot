@@ -18,6 +18,7 @@ async def test_authorized_drom_smoke_one_search():
     try:
         result=await provider.search(PartSearchQuery(make="Lada",model="Granta",year=2012,
             part_name="фара",search_phrase="фара Lada Granta 2012",region="Новосибирск",condition=PartCondition.USED))
-        assert result.status.value in {"READY","INSUFFICIENT_DATA","BLOCKED","UNAVAILABLE","ERROR"}
+        assert result.status.value not in {"UNAVAILABLE","ERROR"}
+        assert result.status.value in {"READY","INSUFFICIENT_DATA","BLOCKED"}
     finally:
         await provider.close()

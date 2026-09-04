@@ -63,11 +63,11 @@ async def main() -> None:
             read=settings.yandex_vision_read_timeout, write=settings.yandex_vision_read_timeout,
             pool=settings.yandex_vision_connect_timeout)
         vision.max_retries = settings.yandex_vision_max_retries
-        parts_provider=await build_parts_provider(settings,vision)
         parts_agent=YandexPartsAgent(vision,model_uri=settings.yandex_parts_model_uri,
             query_prompt_version=settings.yandex_parts_prompt_version,
             match_prompt_version=settings.yandex_parts_match_prompt_version,
             max_retries=settings.yandex_parts_max_retries)
+        parts_provider=await build_parts_provider(settings,vision,parts_agent)
         parts_orchestrator=PartsSearchOrchestrator(parts_provider,
             default_condition=PartCondition(settings.parts_default_condition),agent=parts_agent)
         bot = Bot(settings.telegram_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))

@@ -87,3 +87,10 @@ async def test_user_region_update_and_explicit_cleanup(database: Database):
     for index in range(7): await _save(database,300,index)
     await database.cleanup_old_calculations(user.id)
     assert len(await database.get_user_calculations_list(300,99))==5
+
+@pytest.mark.asyncio
+async def test_user_preferences_are_persisted(database: Database):
+    await database.upsert_user(400)
+    await database.set_user_preferences(400,target_profit_rub=75000,parts_condition="USED")
+    user=await database.get_user(400)
+    assert user.target_profit_rub==75000 and user.parts_condition=="USED"

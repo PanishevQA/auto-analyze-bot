@@ -34,6 +34,19 @@ class Database:
                 user.region = region
             await session.commit()
 
+    async def set_user_preferences(self, telegram_id: int, *, target_profit_rub: int | None = None,
+                                   parts_condition: str | None = None) -> None:
+        async with self.session_factory() as session:
+            user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+            if user is None:
+                user = User(telegram_id=telegram_id)
+                session.add(user)
+            if target_profit_rub is not None:
+                user.target_profit_rub = target_profit_rub
+            if parts_condition is not None:
+                user.parts_condition = parts_condition
+            await session.commit()
+
     async def get_user(self, telegram_id: int) -> User | None:
         async with self.session_factory() as session:
             return await session.scalar(select(User).where(User.telegram_id == telegram_id))
