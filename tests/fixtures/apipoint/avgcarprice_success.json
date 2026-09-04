@@ -1,0 +1,1 @@
+{"status":200,"price":"0.00","balance":"999999.00","result":{"avgcarprice":{"error":false,"error_msg":"","result":{"average":1000000,"minimalAverage":900000,"offers_count":3,"offers":[{"price":950000,"distance":120000,"url":"https://example.test/offer/1"}]}}}}
