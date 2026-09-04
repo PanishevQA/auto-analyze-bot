@@ -21,8 +21,8 @@ async def build_parts_provider(settings, yandex_client=None):
     return CachedPartsProvider(browser,settings.parts_price_cache_ttl_hours)
 
 class PartsSearchOrchestrator:
-    def __init__(self, provider, *, default_condition: PartCondition=PartCondition.NEW):
-        self.provider=provider; self.agent=YandexPartsAgent(); self.default_condition=default_condition
+    def __init__(self, provider, *, default_condition: PartCondition=PartCondition.NEW, agent=None):
+        self.provider=provider; self.agent=agent or YandexPartsAgent(); self.default_condition=default_condition
     async def estimate(self, vehicle: VehicleSpec, defects: list[VisibleDefect], repairs: RepairEstimate):
         by_code={item.defect_code:item for item in repairs.items}; results=[]
         for index,defect in enumerate(defects,1):

@@ -13,6 +13,7 @@ from handlers import build_router
 from services.apipoint import APIpointClient, FakeAPIpointClient
 from services.parts_orchestrator import PartsSearchOrchestrator, build_parts_provider
 from schemas import PartCondition
+from services.yandex_parts_agent import YandexPartsAgent
 from services.deal_engine import DealEngine, DealSettings
 from services.repair_catalog import RepairCatalog
 from services.yandex_vision import YandexVisionClient
@@ -63,13 +64,15 @@ async def main() -> None:
             pool=settings.yandex_vision_connect_timeout)
         vision.max_retries = settings.yandex_vision_max_retries
         parts_provider=await build_parts_provider(settings,vision)
+        parts_agent=YandexPartsAgent(vision)
         parts_orchestrator=PartsSearchOrchestrator(parts_provider,
-            default_condition=PartCondition(settings.parts_default_condition))
+            default_condition=PartCondition(settings.parts_default_condition),agent=parts_agent)
         bot = Bot(settings.telegram_bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         dispatcher = Dispatcher(
             db=db, apipoint=apipoint, deal_engine=deal_engine,
             repair_catalog=repair_catalog, vision=vision, settings=settings,
             parts_orchestrator=parts_orchestrator,
+            parts_agent=parts_agent,
         )
         dispatcher.update.outer_middleware(OwnerAccessMiddleware(settings.owner_telegram_ids))
         dispatcher.include_router(build_router())

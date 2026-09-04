@@ -5,7 +5,7 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery,InlineKeyboardButton,InlineKeyboardMarkup
 
 from handlers.questionnaire import Questionnaire
 from schemas import (AnalysisStatus, ConditionAssessment, Coverage, MarketEstimate,
@@ -94,6 +94,10 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
                 parts_permission_confirmed=settings.drom_baza_permission_confirmed,
                 parts_prompt_version=settings.yandex_parts_prompt_version)
             await state.clear(); await callback.message.answer(summary); await answer_long_html(callback.message, details)
+            if settings.parts_search_mode=="MANUAL_BROWSER" and part_quotes and not parts_complete:
+                await callback.message.answer("Можно добавить скриншоты выдачи для расчёта запчастей.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                        text="📷 Добавить объявления",callback_data=f"manualparts:{calculation_id}")]]))
     except Exception:
         await db.complete_analysis(calculation_id, status="FAILED")
         await callback.message.answer("❌ Анализ завершился ошибкой. Временные файлы удалены.")
