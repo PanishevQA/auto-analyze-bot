@@ -18,7 +18,7 @@ async def test_manual_confirmation_saves_without_market_and_keeps_defect_id():
     query=PartSearchQuery(defect_id=defect.defect_id,make="Lada",model="Granta",year=2012,
         part_name="левая фара",region="x",condition=PartCondition.NEW)
     offers=[PartOffer(provider="manual",part_name="левая фара Lada Granta",condition=PartCondition.NEW,
-        unit_price_rub=value,in_stock=True,offer_url=f"https://baza.drom.ru/{value}.html",
+        unit_price_rub=value,delivery_price_rub=0,in_stock=True,offer_url=f"https://baza.drom.ru/{value}.html",
         fetched_at=datetime.now(timezone.utc),match_status=MatchStatus.EXACT,match_confidence=Decimal(".9"))
         for value in (10000,12000,14000)]
     old={"id":1,"car_data":vehicle.model_dump(mode="json"),"market_data":{},

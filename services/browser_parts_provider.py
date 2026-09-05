@@ -8,19 +8,24 @@ from html.parser import HTMLParser
 from schemas import MatchStatus, PartCondition, PartOffer, PartPriceEstimate, PartSearchQuery, PartsStatus, VehicleSpec
 from services.manual_parts_provider import validate_drom_baza_url
 from services.parts import normalize_offers
-from services.parts_matcher import match_offer, sanitize_listing_text
+from services.parts_matcher import enforce_compatibility, match_offer, sanitize_listing_text
+from utils.money_parser import parse_rubles
+from decimal import Decimal
 
 BLOCK_MARKERS=("captcha","подтвердите, что вы человек","access denied","необычный трафик")
 
 class BrowserBlocked(RuntimeError): pass
 
 class _CardsParser(HTMLParser):
-    def __init__(self): super().__init__(); self.cards=[]; self.current=None; self.capture=None; self.card_tag=None
+    def __init__(self): super().__init__(); self.cards=[]; self.current=None; self.capture=None; self.card_tag=None; self.depth=0
     def handle_starttag(self,tag,attrs):
         a=dict(attrs); classes=a.get("class","")
         if tag in {"article","div"} and ("offer-card" in classes or a.get("data-testid")=="offer-card"):
-            self.current={"title":"","price":"","old":"","href":a.get("data-url")}
-            self.card_tag=tag
+            self.current={"title":"","price":"","old":"","href":a.get("data-url"),
+                "condition":a.get("data-condition"),"in_stock":a.get("data-in-stock"),
+                "delivery":a.get("data-delivery"),"seller":a.get("data-seller"),"location":a.get("data-location")}
+            self.card_tag=tag; self.depth=1
+        elif self.current is not None: self.depth+=1
         if self.current is not None:
             if tag=="a" and a.get("href"): self.current["href"]=a["href"]
             if "current-price" in classes or a.get("data-testid")=="current-price": self.capture="price"
@@ -29,15 +34,14 @@ class _CardsParser(HTMLParser):
     def handle_data(self,data):
         if self.current is not None and self.capture: self.current[self.capture]+=data
     def handle_endtag(self,tag):
-        if self.current is not None and tag==self.card_tag:
+        if self.current is not None: self.depth-=1
+        if self.current is not None and tag==self.card_tag and self.depth==0:
             self.cards.append(self.current); self.current=None
         self.capture=None
 
-def _rubles(text: str) -> int | None:
-    values=re.findall(r"\d[\d\s\u00a0]*",text)
-    return int(re.sub(r"\D","",values[-1])) if values else None
+_rubles = parse_rubles
 
-def parse_visible_cards(html: str, *, condition: PartCondition=PartCondition.NEW) -> list[PartOffer]:
+def parse_visible_cards(html: str, *, condition: PartCondition=PartCondition.UNKNOWN) -> list[PartOffer]:
     lowered=html.casefold()
     if any(marker in lowered for marker in BLOCK_MARKERS): raise BrowserBlocked("Drom остановил автоматизированный доступ")
     parser=_CardsParser(); parser.feed(html); now=datetime.now(timezone.utc); offers=[]
@@ -47,8 +51,12 @@ def parse_visible_cards(html: str, *, condition: PartCondition=PartCondition.NEW
         if href.startswith("/"): href="https://baza.drom.ru"+href
         try: href=validate_drom_baza_url(href)
         except ValueError: continue
+        actual_condition=PartCondition(card["condition"]) if card.get("condition") in {"NEW","USED"} else condition
+        stock={"true":True,"false":False}.get(str(card.get("in_stock")).lower())
+        delivery=_rubles(card.get("delivery") or "") if card.get("delivery") not in {"0",0} else 0
         offers.append(PartOffer(provider="DROM_BAZA_BROWSER",part_name=sanitize_listing_text(card["title"]) or "Деталь",
-            condition=condition,unit_price_rub=price,old_price_rub=_rubles(card["old"]),in_stock=True,
+            condition=actual_condition,unit_price_rub=price,old_price_rub=_rubles(card["old"]),in_stock=stock,
+            delivery_price_rub=delivery,delivery_text=card.get("delivery"),seller=card.get("seller"),location=card.get("location"),
             offer_url=href,fetched_at=now,source="DROM_BAZA_BROWSER"))
     return offers
 
@@ -86,7 +94,7 @@ class BrowserPartsProvider:
             field=page.get_by_placeholder("Название запчасти или её номер")
             await field.fill(query.search_phrase or query.part_name); await page.get_by_role("button",name="Найти").click()
             await page.wait_for_load_state("domcontentloaded")
-            offers=parse_visible_cards(await page.content(),condition=query.condition)[:self.max_offers]
+            offers=parse_visible_cards(await page.content())[:self.max_offers]
             if not offers:
                 return PartPriceEstimate(defect_id=query.defect_id,status=PartsStatus.INSUFFICIENT_DATA,
                     provider="DROM_BAZA_BROWSER",missing_parts=[query.part_name])
@@ -96,6 +104,7 @@ class BrowserPartsProvider:
                     year=query.year,generation=query.generation,asking_price_rub=1,region=query.region)
                 try: matched,metadata=await self.agent.classify_offers(vehicle,query,offers)
                 except Exception: pass
+            matched=[enforce_compatibility(query,o,Decimal(str(self.match_confidence))) for o in matched]
             relevant=[o for o in matched if o.match_status is MatchStatus.EXACT or
                       (o.match_status is MatchStatus.LIKELY and float(o.match_confidence)>=self.match_confidence)]
             estimate=normalize_offers(relevant,condition=query.condition,quantity=query.quantity,
@@ -110,7 +119,7 @@ class BrowserPartsProvider:
 class FixtureBrowserPartsProvider:
     def __init__(self, html: str, min_offers: int=3): self.html=html; self.min_offers=min_offers
     async def search(self, query: PartSearchQuery) -> PartPriceEstimate:
-        try: offers=[match_offer(query,o) for o in parse_visible_cards(self.html,condition=query.condition)]
+        try: offers=[match_offer(query,o) for o in parse_visible_cards(self.html)]
         except BrowserBlocked: return PartPriceEstimate(status=PartsStatus.BLOCKED,provider="DROM_BAZA_BROWSER")
         if not offers: return PartPriceEstimate(defect_id=query.defect_id,status=PartsStatus.INSUFFICIENT_DATA,provider="DROM_BAZA_BROWSER")
         relevant=[o for o in offers if o.match_status in {MatchStatus.EXACT,MatchStatus.LIKELY}]

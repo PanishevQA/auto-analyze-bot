@@ -1,14 +1,17 @@
 from pathlib import Path
-from datetime import datetime,timezone
+from decimal import Decimal
+from datetime import datetime,timezone,timedelta
 from aiogram import F,Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State,StatesGroup
 from aiogram.types import CallbackQuery,InlineKeyboardButton,InlineKeyboardMarkup,Message
 
-from schemas import (ConditionAssessment,MarketEstimate,PartOffer,PartPriceEstimate,
+from schemas import (ConditionAssessment,MarketEstimate,MatchStatus,PartOffer,PartPriceEstimate,
     PartSearchQuery,PartsStatus,RepairEstimate,VehicleSpec)
 from services.manual_parts_provider import ManualBrowserPartsProvider,validate_drom_baza_url
-from services.parts_matcher import match_offer
+from utils.money_parser import parse_rubles
+from services.parts_matcher import enforce_compatibility, match_offer
+from services.economics import engine_from_snapshot, settings_snapshot, validate_parts_for_economics
 from services.photos import temporary_analysis_directory
 from utils.deal_formatters import format_deal_details,format_deal_summary
 from utils.messages import answer_long_html
@@ -54,7 +57,7 @@ async def choose_input(callback:CallbackQuery):
     await callback.answer()
 
 @router.message(ManualParts.collecting,F.text)
-async def links(message:Message,state:FSMContext,db):
+async def links(message:Message,state:FSMContext,db,parts_agent,settings):
     rows=[row.strip() for row in (message.text or "").splitlines() if row.strip()]
     if not 3<=len(rows)<=10: await message.answer("Нужно от 3 до 10 строк."); return
     data=await state.get_data(); old=await db.get_calculation_by_id(data["manual_calc_id"],message.from_user.id)
@@ -63,13 +66,16 @@ async def links(message:Message,state:FSMContext,db):
     for row in rows:
         try:
             url,title,price=(part.strip() for part in row.split("|",2)); url=validate_drom_baza_url(url)
-            amount=int("".join(c for c in price if c.isdigit()))
+            amount=parse_rubles(price)
+            if amount is None: raise ValueError("Цена должна быть одной положительной суммой")
             offers.append(match_offer(query,PartOffer(provider="DROM_BAZA_MANUAL",part_name=title,
                 condition=query.condition,unit_price_rub=amount,in_stock=True,offer_url=url,
                 fetched_at=datetime.now(timezone.utc),source="DROM_BAZA_MANUAL")))
         except (ValueError,TypeError): await message.answer("Не удалось разобрать строки. Проверьте URL | название | цена."); return
-    preview="\n".join(f"• {o.part_name}: {o.unit_price_rub} ₽ — {o.match_status.value}" for o in offers)
-    await state.update_data(manual_offers=[o.model_dump(mode="json") for o in offers],manual_query=query.model_dump(mode="json"))
+    vehicle=VehicleSpec.model_validate(old["car_data"])
+    offers,matching=await classify_for_confirmation(parts_agent,vehicle,query,offers,float(settings.parts_match_confidence))
+    preview="\n".join(f"• {o.part_name}: {o.unit_price_rub} ₽ — {o.match_status.value}; {', '.join(o.match_reasons)}" for o in offers)
+    await state.update_data(manual_offers=[o.model_dump(mode="json") for o in offers],manual_query=query.model_dump(mode="json"),manual_matching=matching)
     await state.set_state(ManualParts.confirming)
     await message.answer("Проверьте данные:\n"+preview,reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить",callback_data="manualparts:confirm")],
@@ -92,6 +98,7 @@ async def screenshot(message:Message,state:FSMContext):
 async def extract(callback:CallbackQuery,state:FSMContext,db,parts_agent,settings):
     data=await state.get_data(); shots=data.get("manual_screenshots",[])
     if not 3<=len(shots)<=10: await callback.answer("Добавьте от 3 до 10 скриншотов",show_alert=True); return
+    await callback.answer("Распознаю объявления…")
     old=await db.get_calculation_by_id(data["manual_calc_id"],callback.from_user.id); raw=(old["parts_query_data"] or [])[data["manual_query_index"]]
     allowed=set(PartSearchQuery.model_fields); query=PartSearchQuery.model_validate({k:v for k,v in raw.items() if k in allowed})
     async with temporary_analysis_directory(old["id"]) as directory:
@@ -101,32 +108,40 @@ async def extract(callback:CallbackQuery,state:FSMContext,db,parts_agent,setting
             suffix={"image/jpeg":".jpg","image/png":".png","image/webp":".webp"}[item["mime"]]
             path=directory/f"shot-{number}{suffix}"
             await callback.bot.download_file(remote.file_path,destination=path); paths.append(path)
-        offers=await parts_agent.extract_screenshots(paths,query)
+        try: offers=await parts_agent.extract_screenshots(paths,query)
+        except Exception:
+            await callback.message.answer("Не удалось распознать скриншоты. Можно повторить или вернуться назад.",reply_markup=controls())
+            return
     matched=[]
     for offer in offers:
         if offer.offer_url:
             try: validate_drom_baza_url(str(offer.offer_url))
             except ValueError: continue
         matched.append(match_offer(query,offer))
-    preview="\n".join(f"• {offer.part_name}: {offer.unit_price_rub} ₽ — {offer.match_status.value}" for offer in matched) or "Подходящие карточки не распознаны."
-    await state.update_data(manual_offers=[o.model_dump(mode="json") for o in matched],manual_query=query.model_dump(mode="json"))
+    vehicle=VehicleSpec.model_validate(old["car_data"])
+    matched,matching=await classify_for_confirmation(parts_agent,vehicle,query,matched,float(settings.parts_match_confidence))
+    preview="\n".join(f"• {offer.part_name}: {offer.unit_price_rub} ₽ — {offer.match_status.value}; {', '.join(offer.match_reasons)}" for offer in matched) or "Подходящие карточки не распознаны."
+    await state.update_data(manual_offers=[o.model_dump(mode="json") for o in matched],manual_query=query.model_dump(mode="json"),manual_matching=matching)
     await state.set_state(ManualParts.confirming)
     await callback.message.answer("Проверьте распознанные данные:\n"+preview,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Подтвердить",callback_data="manualparts:confirm")],
             [InlineKeyboardButton(text="⬅️ Назад",callback_data="manualparts:back")],
-        [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel"),InlineKeyboardButton(text="🏠 Главное меню",callback_data="nav:home")]])); await callback.answer()
+        [InlineKeyboardButton(text="❌ Отменить",callback_data="nav:cancel"),InlineKeyboardButton(text="🏠 Главное меню",callback_data="nav:home")]]))
 
 @router.callback_query(ManualParts.confirming,F.data=="manualparts:confirm")
-async def confirm(callback:CallbackQuery,state:FSMContext,db,deal_engine,repair_catalog,settings,parts_agent):
-    data=await state.get_data(); old=await db.get_calculation_by_id(data["manual_calc_id"],callback.from_user.id)
+async def confirm(callback:CallbackQuery,state:FSMContext,db,deal_engine,repair_catalog,settings,parts_agent=None):
+    data=await state.get_data()
+    if data.get("manual_confirming"):
+        await callback.answer("Предложения уже обрабатываются"); return
+    await state.update_data(manual_confirming=True); await callback.answer("Сохраняю расчёт…")
+    old=await db.get_calculation_by_id(data["manual_calc_id"],callback.from_user.id)
     vehicle=VehicleSpec.model_validate(old["car_data"])
     market_data=old.get("market_data") or {}
     market=MarketEstimate.model_validate(market_data) if market_data.get("source") else None
     repairs=RepairEstimate.model_validate(old["repair_estimate"]); condition=ConditionAssessment.model_validate(old["condition_data"])
     query=PartSearchQuery.model_validate(data["manual_query"]); offers=[PartOffer.model_validate(x) for x in data["manual_offers"]]
-    matching={"matching_source":"RULES_FALLBACK","fallback_used":True,"input_offers":len(offers)}
-    try: offers,matching=await parts_agent.classify_offers(vehicle,query,offers)
-    except Exception: pass
+    matching=data.get("manual_matching") or {"matching_source":"RULES_FALLBACK","fallback_used":True,"input_offers":len(offers),"user_confirmed":True}
+    matching["user_confirmed"]=True
     provider=ManualBrowserPartsProvider(settings.drom_baza_start_url,settings.parts_min_matched_offers)
     quote=provider.normalize_submitted(query,offers).model_copy(update={"query_data":{**query.model_dump(mode="json",exclude={"vin"}),**matching}})
     previous=[PartPriceEstimate.model_validate(item) for item in (old.get("parts_data") or [])]
@@ -134,18 +149,21 @@ async def confirm(callback:CallbackQuery,state:FSMContext,db,deal_engine,repair_
     quote_index=next((i for i,item in enumerate(quotes) if item.defect_id==quote.defect_id),None)
     if quote_index is None: quotes.append(quote)
     else: quotes[quote_index]=quote
-    complete=bool(quotes) and all(item.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in quotes)
-    parts_total=sum(item.selected_price_rub or 0 for item in quotes if item.status is PartsStatus.READY)
-    overall=PartsStatus.READY if complete else next((item.status for item in quotes if item.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED}),quote.status)
-    deal=deal_engine.calculate(asking_price_rub=vehicle.asking_price_rub,market=market,repairs=repairs,
+    quotes,complete,parts_total,_=validate_parts_for_economics(repairs,quotes,condition=query.condition,
+        now=datetime.now(timezone.utc),ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
+    overall=PartsStatus.READY if complete else next((item.status for item in quotes if item.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED}),PartsStatus.UNAVAILABLE)
+    snapshot=(old.get("scores") or {}).get("financial_settings")
+    active_engine,recovered=engine_from_snapshot(snapshot,deal_engine)
+    if not recovered: snapshot=settings_snapshot(deal_engine)
+    deal=active_engine.calculate(asking_price_rub=vehicle.asking_price_rub,market=market,repairs=repairs,
         coverage=condition.coverage,has_blocking_risk=repair_catalog.has_blocking_risk(condition.defects),
         parts_total_rub=parts_total,parts_complete=complete)
     summary=format_deal_summary(vehicle,deal,market); details=format_deal_details(vehicle,market,condition,repairs,deal,quotes)
     await db.complete_analysis(old["id"],parts_data=[item.model_dump(mode="json") for item in quotes],parts_status=overall.value,
         parts_complete=complete,parts_source=quote.provider,parts_quoted_at=quote.fetched_at,
-        scores={"deal_result":deal.model_dump(mode="json")},final_report=summary+"\n\n"+details,
+        scores={"deal_result":deal.model_dump(mode="json"),"financial_settings":snapshot},final_report=summary+"\n\n"+details,
         status="COMPLETED" if complete else "PARTIAL")
-    await state.clear(); await callback.answer(); await callback.message.answer(summary); await answer_long_html(callback.message,details)
+    await state.clear(); await callback.message.answer(summary); await answer_long_html(callback.message,details)
     if not complete:
         remaining=sum(item.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in quotes)
         await callback.message.answer(f"Остались неоценённые детали: {remaining}.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -158,3 +176,12 @@ async def skip(callback:CallbackQuery,state:FSMContext):
 @router.callback_query(F.data=="manualparts:back")
 async def back(callback:CallbackQuery,state:FSMContext):
     await state.clear(); await callback.answer(); await callback.message.answer("Возврат к отчёту.",reply_markup=main_menu())
+
+
+async def classify_for_confirmation(agent,vehicle,query,offers,threshold):
+    metadata={"matching_source":"RULES_FALLBACK","fallback_used":True,"input_offers":len(offers)}
+    try: classified,metadata=await agent.classify_offers(vehicle,query,offers)
+    except Exception: classified=[match_offer(query,offer) for offer in offers]
+    checked=[enforce_compatibility(query,offer,Decimal(str(threshold))) for offer in classified]
+    metadata["accepted_offers"]=sum(offer.match_status in {MatchStatus.EXACT,MatchStatus.LIKELY} for offer in checked)
+    return checked,metadata

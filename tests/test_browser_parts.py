@@ -24,3 +24,17 @@ async def test_blocked_and_changed_layout_stop_safely():
 @pytest.mark.parametrize("url",["http://baza.drom.ru/1","https://evil.test/","https://baza.drom.ru.evil.test/1"])
 def test_url_allowlist(url):
     with pytest.raises(ValueError): validate_drom_baza_url(url)
+
+def test_money_parser_handles_kopecks_and_rejects_ranges():
+    from utils.money_parser import parse_rubles
+    assert parse_rubles("12 000,50 ₽") == 12001
+    assert parse_rubles("12 000–15 000 ₽") is None
+    assert parse_rubles("-100 ₽") is None
+
+
+def test_card_preserves_actual_condition_stock_and_delivery():
+    html='<article class="offer-card" data-condition="USED" data-in-stock="false"><h3><a href="https://baza.drom.ru/5">Фара</a></h3><span class="current-price">12 000 ₽</span></article>'
+    offer=parse_visible_cards(html)[0]
+    assert offer.condition is PartCondition.USED
+    assert offer.in_stock is False
+    assert offer.delivery_price_rub is None

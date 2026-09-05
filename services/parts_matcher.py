@@ -32,3 +32,21 @@ def match_offer(query: PartSearchQuery, offer: PartOffer) -> PartOffer:
         "seller":sanitize_listing_text(offer.seller),"delivery_text":sanitize_listing_text(offer.delivery_text),
         "match_status":status,"match_confidence":confidence,
         "match_reasons":rejected or (["совпали обязательные признаки"] if not missing else ["частичное совпадение"] )})
+
+
+def enforce_compatibility(query: PartSearchQuery, offer: PartOffer,
+                          confidence_threshold: Decimal) -> PartOffer:
+    """Apply non-overridable deterministic constraints after any AI classification."""
+    rules = match_offer(query, offer)
+    reasons = list(offer.match_reasons)
+    if offer.condition is not query.condition:
+        reasons.append("не совпадает состояние детали")
+        return offer.model_copy(update={"match_status": MatchStatus.REJECTED,
+            "match_confidence": Decimal("0"), "match_reasons": reasons})
+    if rules.match_status is MatchStatus.REJECTED:
+        return offer.model_copy(update={"match_status": MatchStatus.REJECTED,
+            "match_confidence": Decimal("0"), "match_reasons": list(dict.fromkeys(reasons+rules.match_reasons))})
+    if offer.match_status in {MatchStatus.EXACT,MatchStatus.LIKELY} and offer.match_confidence < confidence_threshold:
+        reasons.append("уверенность ниже установленного порога")
+        return offer.model_copy(update={"match_status": MatchStatus.REJECTED,"match_reasons":reasons})
+    return offer

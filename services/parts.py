@@ -33,11 +33,13 @@ def mark_stale_quotes(quotes: list[PartPriceEstimate], *, now: datetime,
 
 def normalize_offers(offers: list[PartOffer], *, condition: PartCondition,
                      quantity: int = 1, provider: str | None = None,
-                     min_offers: int = 1) -> PartPriceEstimate:
+                     min_offers: int = 1, match_confidence: float = .8) -> PartPriceEstimate:
     deduplicated={str(offer.offer_url) if offer.offer_url else f"no-url-{index}":offer
                   for index,offer in enumerate(offers)}
-    valid = [offer for offer in deduplicated.values() if offer.condition is condition and offer.in_stock
-             and offer.unit_price_rub > 0 and offer.match_status in {MatchStatus.EXACT,MatchStatus.LIKELY}]
+    valid = [offer for offer in deduplicated.values() if offer.condition is condition and offer.in_stock is True
+             and offer.delivery_price_rub is not None and offer.unit_price_rub > 0
+             and offer.match_status in {MatchStatus.EXACT,MatchStatus.LIKELY}
+             and float(offer.match_confidence)>=match_confidence]
     totals = sorted((offer.unit_price_rub + offer.delivery_price_rub) * quantity for offer in valid)
     now = max((offer.fetched_at for offer in valid), default=datetime.now(timezone.utc))
     if not totals:

@@ -1,6 +1,5 @@
 import html
 import logging
-from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 
 from aiogram import Router
@@ -10,10 +9,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram import F
 
-from schemas import ConditionAssessment, MarketEstimate, RepairEstimate, VehicleSpec, PartPriceEstimate, PartsStatus
+from schemas import ConditionAssessment, MarketEstimate, RepairEstimate, VehicleSpec, PartPriceEstimate, PartsStatus, PartCondition
 from services.repair_catalog import RepairCatalog
 from services.deal_engine import DealEngine
-from services.parts import mark_stale_quotes
+from services.economics import engine_from_snapshot, validate_parts_for_economics
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.validators import validate_price
 
@@ -95,18 +94,15 @@ async def show_calculation(message: Message, argument: str, db,owner_id:int|None
             repairs=RepairEstimate.model_validate(calculation["repair_estimate"])
             condition=ConditionAssessment.model_validate(calculation["condition_data"])
             parts=[PartPriceEstimate.model_validate(item) for item in (calculation.get("parts_data") or [])]
-            parts=mark_stale_quotes(parts,now=datetime.now(timezone.utc),
-                ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
-            complete=all(item.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in parts)
-            total=sum(item.selected_price_rub or 0 for item in parts if item.status is PartsStatus.READY)
-            user=await db.get_user(owner_id or message.from_user.id)
-            active_engine=deal_engine
-            if user and user.target_profit_rub is not None:
-                active_engine=DealEngine(replace(deal_engine.settings,target_profit_rub=user.target_profit_rub))
+            expected=next((item.query_data.get("condition") for item in parts if item.query_data and item.query_data.get("condition")),settings.parts_default_condition)
+            parts,complete,total,_=validate_parts_for_economics(repairs,parts,condition=PartCondition(expected),
+                now=datetime.now(timezone.utc),ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
+            active_engine,recovered=engine_from_snapshot((calculation.get("scores") or {}).get("financial_settings"),deal_engine)
             deal=active_engine.calculate(asking_price_rub=vehicle.asking_price_rub,market=market,repairs=repairs,
                 coverage=condition.coverage,has_blocking_risk=repair_catalog.has_blocking_risk(condition.defects),
                 parts_total_rub=total,parts_complete=complete)
             report=format_deal_summary(vehicle,deal,market)+"\n\n"+format_deal_details(vehicle,market,condition,repairs,deal,parts)
+            if not recovered: report="⚠️ Финансовые параметры старого расчёта восстановлены из текущей конфигурации.\n\n"+report
         except Exception as error:
             logger.warning("Structured history rebuild failed calculation_id=%s error=%s",
                            calculation_id,type(error).__name__)
@@ -140,19 +136,20 @@ async def recalc_price(message:Message,state:FSMContext,db,deal_engine:DealEngin
         repairs=RepairEstimate.model_validate(old["repair_estimate"])
         condition=ConditionAssessment.model_validate(old["condition_data"])
         parts=[PartPriceEstimate.model_validate(item) for item in (old.get("parts_data") or [])]
-        parts=mark_stale_quotes(parts,now=datetime.now(timezone.utc),ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
     except Exception:
         await message.answer("Этот расчёт создан в старой версии бота и не содержит данных о состоянии автомобиля. Выполните новый анализ."); await state.clear(); return
     blocking=repair_catalog.has_blocking_risk(condition.defects)
-    parts_complete=all(item.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for item in parts)
-    parts_total=sum(item.selected_price_rub or 0 for item in parts if item.status is PartsStatus.READY)
-    deal=deal_engine.calculate(asking_price_rub=new_price,market=market,repairs=repairs,
+    expected=next((item.query_data.get("condition") for item in parts if item.query_data and item.query_data.get("condition")),settings.parts_default_condition)
+    parts,parts_complete,parts_total,_=validate_parts_for_economics(repairs,parts,condition=PartCondition(expected),
+        now=datetime.now(timezone.utc),ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
+    active_engine,recovered=engine_from_snapshot((old.get("scores") or {}).get("financial_settings"),deal_engine)
+    deal=active_engine.calculate(asking_price_rub=new_price,market=market,repairs=repairs,
         coverage=condition.coverage,has_blocking_risk=blocking,parts_total_rub=parts_total,
         parts_complete=parts_complete)
     summary=format_deal_summary(vehicle,deal,market); details=format_deal_details(vehicle,market,condition,repairs,deal,parts)
     await db.save_calculation(message.from_user.id,car_data=vehicle.model_dump(mode="json"),
         market_data=market.model_dump(mode="json") if market else {},repair_estimate=repairs.model_dump(mode="json"),
-        scores={"deal_result":deal.model_dump(mode="json")},final_report=summary+"\n\n"+details,
+        scores={"deal_result":deal.model_dump(mode="json"),"financial_settings":(old.get("scores") or {}).get("financial_settings")},final_report=summary+"\n\n"+details,
         metadata={"parent_calculation_id":old["id"],"status":"COMPLETED","condition_data":condition.model_dump(mode="json"),
             "parts_data":[p.model_dump(mode="json") for p in parts],"parts_status":old.get("parts_status"),
             "parts_quoted_at":old.get("parts_quoted_at"),"parts_provider":old.get("parts_provider"),

@@ -1,7 +1,7 @@
 import asyncio
-from dataclasses import replace
 from contextlib import suppress
 from decimal import Decimal
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from aiogram import F, Router
@@ -16,6 +16,7 @@ from services.deal_engine import DealEngine
 from services.repair_catalog import RepairCatalog
 from services.photos import temporary_analysis_directory
 from services.parts_orchestrator import PartsSearchOrchestrator
+from services.economics import settings_snapshot, engine_from_snapshot, validate_parts_for_economics
 from schemas import PartCondition, PartsStatus
 from utils.deal_formatters import format_deal_details, format_deal_summary
 from utils.messages import answer_long_html
@@ -65,13 +66,12 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
             user=await db.get_user(callback.from_user.id)
             part_condition=PartCondition(user.parts_condition) if user and user.parts_condition else PartCondition(settings.parts_default_condition)
             part_quotes=await parts_orchestrator.estimate(vehicle,condition.defects,repairs,part_condition)
-            parts_total=sum(q.selected_price_rub or 0 for q in part_quotes if q.status is PartsStatus.READY)
-            parts_complete=all(q.status in {PartsStatus.READY,PartsStatus.NOT_REQUIRED} for q in part_quotes)
+            snapshot=settings_snapshot(deal_engine,target_profit_rub=user.target_profit_rub if user else None)
+            active_engine,_=engine_from_snapshot(snapshot,deal_engine)
+            part_quotes,parts_complete,parts_total,_=validate_parts_for_economics(repairs,part_quotes,
+                condition=part_condition,now=datetime.now(timezone.utc),ttl=timedelta(hours=settings.parts_price_cache_ttl_hours))
             overall_parts_status=(PartsStatus.NOT_REQUIRED if not part_quotes else PartsStatus.READY
-                if parts_complete else next(q.status for q in part_quotes if q.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED}))
-            active_engine=deal_engine
-            if user and user.target_profit_rub is not None:
-                active_engine=DealEngine(replace(deal_engine.settings,target_profit_rub=user.target_profit_rub))
+                if parts_complete else next((q.status for q in part_quotes if q.status not in {PartsStatus.READY,PartsStatus.NOT_REQUIRED}),PartsStatus.UNAVAILABLE))
             deal = active_engine.calculate(asking_price_rub=vehicle.asking_price_rub, market=market,
                 repairs=repairs, coverage=condition.coverage, has_blocking_risk=blocking,
                 parts_total_rub=parts_total, parts_complete=parts_complete)
@@ -84,7 +84,7 @@ async def analyze(callback: CallbackQuery, state: FSMContext, db, apipoint, visi
             if not parts_complete: status="PARTIAL"
             await db.complete_analysis(calculation_id, car_data=vehicle.model_dump(mode="json"),
                 market_data=market.model_dump(mode="json") if market else {}, repair_estimate=repairs.model_dump(mode="json"),
-                scores={"deal_result":deal.model_dump(mode="json")}, final_report=summary+"\n\n"+details,
+                scores={"deal_result":deal.model_dump(mode="json"),"financial_settings":snapshot}, final_report=summary+"\n\n"+details,
                 status=status, photos_metadata=[p.model_dump(mode="json",exclude={"local_temp_path"}) for p in photos],
                 condition_data=condition.model_dump(mode="json"),
                 source_url=str(vehicle.source_url) if vehicle.source_url else None, source_mode=vehicle.source_mode.value,

@@ -121,7 +121,7 @@ class MarketEstimate(StrictModel):
     is_test_data: bool = False
 
 class PartCondition(StrEnum):
-    NEW="NEW"; USED="USED"
+    NEW="NEW"; USED="USED"; UNKNOWN="UNKNOWN"
 
 class PartSearchQuery(StrictModel):
     defect_id: str = Field(default_factory=lambda: uuid4().hex,min_length=1,max_length=64)
@@ -136,9 +136,9 @@ class PartSearchQuery(StrictModel):
 class PartOffer(StrictModel):
     provider: str; manufacturer: str | None = None; part_name: str
     oem_number: str | None = None; condition: PartCondition
-    unit_price_rub: int = Field(gt=0); delivery_price_rub: int = Field(default=0, ge=0)
+    unit_price_rub: int = Field(gt=0); delivery_price_rub: int | None = Field(default=None, ge=0)
     quantity_available: int | None = Field(default=None, ge=0); delivery_days: int | None = Field(default=None, ge=0)
-    in_stock: bool; offer_url: HttpUrl | None = None; fetched_at: datetime
+    in_stock: bool | None; offer_url: HttpUrl | None = None; fetched_at: datetime
     old_price_rub: int | None = Field(default=None, gt=0)
     location: str | None = None; delivery_text: str | None = None; seller: str | None = None
     source: str = "DROM_BAZA_BROWSER"

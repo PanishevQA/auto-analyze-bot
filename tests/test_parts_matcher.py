@@ -42,3 +42,12 @@ async def test_screenshot_extraction_uses_structured_yandex_payload(tmp_path):
     q=PartSearchQuery(make="Ford",model="Focus",year=2015,part_name="фара",region="Москва")
     offers=await YandexPartsAgent(Vision()).extract_screenshots([image],q)
     assert offers[0].unit_price_rub==10000 and offers[0].delivery_price_rub==500
+
+def test_ai_exact_cannot_override_wrong_side_or_condition():
+    from decimal import Decimal
+    from services.parts_matcher import enforce_compatibility
+    q=PartSearchQuery(make="Ford",model="Focus",year=2015,part_name="фара",side="LEFT",region="x",condition=PartCondition.NEW)
+    offer=PartOffer(provider="x",part_name="Ford Focus фара правая",condition=PartCondition.USED,
+        unit_price_rub=100,delivery_price_rub=0,in_stock=True,fetched_at=datetime.now(timezone.utc),
+        match_status=MatchStatus.EXACT,match_confidence=Decimal(".99"))
+    assert enforce_compatibility(q,offer,Decimal(".8")).match_status is MatchStatus.REJECTED

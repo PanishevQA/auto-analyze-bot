@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime,timezone
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from schemas import MatchStatus, PartCondition, PartOffer, PartSearchQuery, VehicleSpec
 
 PROMPT_FILES={"parts-query-v1":"parts_query_v1.txt","parts-match-v1":"parts_match_v1.txt"}
@@ -18,6 +18,12 @@ class OfferMatch(BaseModel):
 class OfferMatches(BaseModel):
     model_config=ConfigDict(extra="forbid")
     matches:list[OfferMatch]
+
+    @model_validator(mode="after")
+    def unique_indices(self):
+        indices=[item.offer_index for item in self.matches]
+        if len(indices)!=len(set(indices)): raise ValueError("Индексы предложений должны быть уникальны")
+        return self
 
 class PartsSearchPlan(BaseModel):
     model_config=ConfigDict(extra="forbid")
@@ -87,7 +93,9 @@ class YandexPartsAgent:
             "text":{"format":{"type":"json_schema","name":"parts_offer_matches",
                 "schema":OfferMatches.model_json_schema(),"strict":True}}}
         text,_=await self._post(payload); parsed=OfferMatches.model_validate_json(text)
-        by_index={item.offer_index:item for item in parsed.matches if item.offer_index<len(offers)}
+        if any(item.offer_index>=len(offers) for item in parsed.matches):
+            raise ValueError("Индекс предложения вне диапазона")
+        by_index={item.offer_index:item for item in parsed.matches}
         result=[]
         for index,offer in enumerate(offers):
             match=by_index.get(index)
@@ -104,13 +112,12 @@ class YandexPartsAgent:
         return await asyncio.to_thread((Path(__file__).parents[1]/"prompts"/filename).read_text,encoding="utf-8")
 
     async def _post(self,payload):
-        original=getattr(self.vision_client,"max_retries",None)
         try:
-            self.vision_client.max_retries=self.max_retries
+            return await self.vision_client._post(payload,max_retries=self.max_retries)
+        except TypeError as error:
+            # Protocol-compatible test doubles and older adapters have no keyword yet.
+            if "max_retries" not in str(error): raise
             return await self.vision_client._post(payload)
-        finally:
-            if original is None: delattr(self.vision_client,"max_retries")
-            else: self.vision_client.max_retries=original
 
     @staticmethod
     def _clean(value):

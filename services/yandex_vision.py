@@ -77,9 +77,10 @@ class YandexVisionClient:
             "text": {"format": {"type": "json_schema", "name": "condition_assessment",
                                   "schema": ConditionAssessment.model_json_schema(), "strict": True}}}
 
-    async def _post(self, payload: dict[str, Any]) -> tuple[str, Any]:
+    async def _post(self, payload: dict[str, Any], *, max_retries: int | None = None) -> tuple[str, Any]:
         response = None
-        for attempt in range(self.max_retries + 1):
+        retries=self.max_retries if max_retries is None else max_retries
+        for attempt in range(retries + 1):
             try:
                 response = await self.client.post(self.endpoint, json=payload,
                     headers={"Authorization": f"Api-Key {self.api_key}"}, timeout=self.timeout)
@@ -88,7 +89,7 @@ class YandexVisionClient:
                 response.raise_for_status(); break
             except (httpx.TimeoutException, httpx.HTTPStatusError) as error:
                 temporary = isinstance(error, httpx.TimeoutException) or error.response.status_code == 429 or error.response.status_code >= 500
-                if not temporary or attempt >= self.max_retries: raise
+                if not temporary or attempt >= retries: raise
                 await asyncio.sleep(0)
         body = response.json()
         text = body.get("output_text")
